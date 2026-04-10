@@ -1,0 +1,17 @@
+# Uso: docker compose up -d --build
+services:
+  mcoeweb:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      # Mercado Livre (OAuth) — preferir segredos em env, não em appsettings:
+      # MERCADOLIVRE_ACCESS_TOKEN: "APP_USR-..."
+      # MERCADOLIVRE_REFRESH_TOKEN: "TG-..."
+      # Opcional: expiração do access token (Unix segundos UTC ou ISO 8601). Sem isso, na 1ª chamada renova com refresh_token para alinhar expires_in.
+      # MERCADOLIVRE_ACCESS_TOKEN_EXPIRES_AT: "1740000000"
+    # Descomente para montar config local (sem commitar segredos):
+    # volumes:
+    #   - ./MCOEWeb/appsettings.Production.json:/app/appsettings.Production.json:ro

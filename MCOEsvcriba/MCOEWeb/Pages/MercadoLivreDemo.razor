@@ -1,0 +1,304 @@
+@page "/mercadolivre-demo"
+@inject MercadoLivreApiClient MercadoLivre
+
+<PageTitle>Mercado Livre - Exemplo</PageTitle>
+
+<h3>Exemplo de uso do token (Mercado Livre)</h3>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">1. Autorizar aplicação</h5>
+        <p class="card-text small text-muted">
+            No painel do Mercado Livre, a <strong>Redirect URI</strong> deve ser exatamente a mesma configurada em
+            <code>appsettings.json</code> → <code>MercadoLivre:RedirectUri</code>.
+            Para este exemplo, use algo como <code>https://seu-dominio/callback-mercadolivre</code>
+            (a rota deste app é <code>/callback-mercadolivre</code>).
+        </p>
+        <p><strong>Redirect URI atual:</strong> <code>@(string.IsNullOrWhiteSpace(MercadoLivre.RedirectUri) ? "(não configurado)" : MercadoLivre.RedirectUri)</code></p>
+        @if (string.IsNullOrWhiteSpace(MercadoLivre.RedirectUri))
+        {
+            <div class="alert alert-warning">Configure ClientId, ClientSecret e RedirectUri em appsettings.</div>
+        }
+        else
+        {
+            <a class="btn btn-primary" href="@MercadoLivre.GetAuthorizationUrl()" target="_blank" rel="noopener">
+                Abrir página de login do Mercado Livre
+            </a>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">2. Atualizar access token (refresh_token)</h5>
+        <p class="card-text small text-muted">
+            Mesma chamada do curl: <code>POST /oauth/token</code> com
+            <code>grant_type=refresh_token</code>, <code>client_id</code> e <code>client_secret</code> do <code>appsettings</code>
+            e o <code>refresh_token</code> abaixo.
+        </p>
+        <div class="mb-2">
+            <label class="form-label">Refresh token</label>
+            <textarea class="form-control font-monospace small" rows="2" @bind="refreshTokenManual" placeholder="TG-..."></textarea>
+        </div>
+        <button type="button" class="btn btn-outline-secondary" @onclick="RenovarToken" disabled="@isLoadingRefresh">
+            @(isLoadingRefresh ? "Renovando..." : "Renovar token")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(erroRefresh))
+        {
+            <div class="alert alert-danger mt-3">@erroRefresh</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(jsonRefresh))
+        {
+            <h6 class="mt-3">Resposta <code>/oauth/token</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 240px; overflow: auto;">@jsonRefresh</pre>
+            <p class="small text-success mb-0">O novo <code>access_token</code> foi colocado no campo da seção 3; o <code>refresh_token</code> no campo acima foi atualizado com o retorno.</p>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">3. Testar com token já obtido</h5>
+        <p class="card-text small text-muted">
+            Após autorizar, você pode colar aqui o <code>access_token</code> retornado (ou usar a página de callback, que já chama a API).
+        </p>
+        <div class="mb-2">
+            <label class="form-label">Access token</label>
+            <textarea class="form-control font-monospace small" rows="2" @bind="tokenManual" placeholder="APP_USR-..."></textarea>
+        </div>
+        <button type="button" class="btn btn-secondary" @onclick="ChamarUsersMe" disabled="@isLoading">
+            @(isLoading ? "Chamando..." : "GET /users/me")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(erroManual))
+        {
+            <div class="alert alert-danger mt-3">@erroManual</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(jsonManual))
+        {
+            <h6 class="mt-3">Resposta</h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 320px; overflow: auto;">@jsonManual</pre>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">4. Pedidos da conta (vendedor)</h5>
+        <p class="card-text small text-muted">
+            Usa <code>GET /orders/search?seller=...</code>. O token precisa ter permissão para pedidos.
+            Se o ID do vendedor ficar em branco, o app chama <code>/users/me</code> e usa o seu próprio ID.
+        </p>
+        <div class="row g-2 mb-2">
+            <div class="col-md-4">
+                <label class="form-label">ID do vendedor (opcional)</label>
+                <input class="form-control" @bind="sellerIdStr" placeholder="Ex.: 207035636" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Offset</label>
+                <input type="number" class="form-control" @bind="pedidosOffset" min="0" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Limit (1–50)</label>
+                <input type="number" class="form-control" @bind="pedidosLimit" min="1" max="50" />
+            </div>
+        </div>
+        <button type="button" class="btn btn-outline-primary" @onclick="BuscarPedidosVendedor" disabled="@isLoadingPedidos">
+            @(isLoadingPedidos ? "Buscando..." : "Buscar pedidos")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(erroPedidos))
+        {
+            <div class="alert alert-danger mt-3">@erroPedidos</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(jsonPedidos))
+        {
+            <h6 class="mt-3">Resposta <code>orders/search</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 400px; overflow: auto;">@jsonPedidos</pre>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">5. Pedido por código (ID)</h5>
+        <p class="card-text small text-muted">
+            <code>GET /orders/{id}</code> — mesmo fluxo do curl com <code>Authorization: Bearer</code>.
+        </p>
+        <div class="row g-2 mb-2">
+            <div class="col-md-6">
+                <label class="form-label">ID do pedido</label>
+                <input class="form-control font-monospace" @bind="pedidoIdStr" placeholder="2000015371733006" />
+            </div>
+        </div>
+        <button type="button" class="btn btn-outline-primary" @onclick="BuscarPedidoPorId" disabled="@isLoadingPedidoId">
+            @(isLoadingPedidoId ? "Buscando..." : "Buscar pedido")
+        </button>
+        @if (!string.IsNullOrWhiteSpace(erroPedidoId))
+        {
+            <div class="alert alert-danger mt-3">@erroPedidoId</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(jsonPedidoId))
+        {
+            <h6 class="mt-3">Resposta <code>orders/@pedidoIdStr</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 400px; overflow: auto;">@jsonPedidoId</pre>
+        }
+    </div>
+</div>
+
+<p><a href="callback-mercadolivre">Abrir rota de callback (útil só após redirecionamento do ML com ?code=...)</a></p>
+
+@code {
+    private string tokenManual = "";
+    private string refreshTokenManual = "";
+    private bool isLoading;
+    private bool isLoadingRefresh;
+    private string? erroManual;
+    private string? erroRefresh;
+    private string? jsonManual;
+    private string? jsonRefresh;
+
+    private string sellerIdStr = "";
+    private int pedidosOffset;
+    private int pedidosLimit = 50;
+    private bool isLoadingPedidos;
+    private string? erroPedidos;
+    private string? jsonPedidos;
+
+    private string pedidoIdStr = "";
+    private bool isLoadingPedidoId;
+    private string? erroPedidoId;
+    private string? jsonPedidoId;
+
+    private async Task RenovarToken()
+    {
+        erroRefresh = null;
+        jsonRefresh = null;
+
+        if (string.IsNullOrWhiteSpace(refreshTokenManual))
+        {
+            erroRefresh = "Cole o refresh_token.";
+            return;
+        }
+
+        isLoadingRefresh = true;
+        try
+        {
+            var resp = await MercadoLivre.AtualizarTokenComRefreshTokenAsync(refreshTokenManual.Trim());
+            refreshTokenManual = resp.RefreshToken;
+            tokenManual = resp.AccessToken;
+            jsonRefresh = System.Text.Json.JsonSerializer.Serialize(resp, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            erroRefresh = ex.Message;
+        }
+        finally
+        {
+            isLoadingRefresh = false;
+        }
+    }
+
+    private async Task ChamarUsersMe()
+    {
+        erroManual = null;
+        jsonManual = null;
+
+        if (string.IsNullOrWhiteSpace(tokenManual))
+        {
+            erroManual = "Cole o access token.";
+            return;
+        }
+
+        isLoading = true;
+        try
+        {
+            MercadoLivre.SetAccessToken(tokenManual.Trim());
+            jsonManual = await MercadoLivre.GetAsync("users/me");
+        }
+        catch (Exception ex)
+        {
+            erroManual = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task BuscarPedidosVendedor()
+    {
+        erroPedidos = null;
+        jsonPedidos = null;
+
+        if (string.IsNullOrWhiteSpace(tokenManual))
+        {
+            erroPedidos = "Cole o access token na seção 3 (ou renove na seção 2).";
+            return;
+        }
+
+        isLoadingPedidos = true;
+        try
+        {
+            MercadoLivre.SetAccessToken(tokenManual.Trim());
+
+            long sellerId;
+            if (string.IsNullOrWhiteSpace(sellerIdStr))
+            {
+                var me = await MercadoLivre.ObterUsuarioAutenticadoAsync();
+                if (me is null)
+                {
+                    erroPedidos = "Não foi possível obter /users/me.";
+                    return;
+                }
+                sellerId = me.Id;
+            }
+            else if (!long.TryParse(sellerIdStr.Trim(), out sellerId))
+            {
+                erroPedidos = "ID do vendedor inválido.";
+                return;
+            }
+
+            jsonPedidos = await MercadoLivre.BuscarPedidosPorVendedorAsync(sellerId, pedidosOffset, pedidosLimit);
+        }
+        catch (Exception ex)
+        {
+            erroPedidos = ex.Message;
+        }
+        finally
+        {
+            isLoadingPedidos = false;
+        }
+    }
+
+    private async Task BuscarPedidoPorId()
+    {
+        erroPedidoId = null;
+        jsonPedidoId = null;
+
+        if (string.IsNullOrWhiteSpace(tokenManual))
+        {
+            erroPedidoId = "Cole o access token na seção 3 (ou renove na seção 2).";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(pedidoIdStr))
+        {
+            erroPedidoId = "Informe o ID do pedido.";
+            return;
+        }
+
+        isLoadingPedidoId = true;
+        try
+        {
+            MercadoLivre.SetAccessToken(tokenManual.Trim());
+            jsonPedidoId = await MercadoLivre.ObterPedidoPorIdAsync(pedidoIdStr.Trim());
+        }
+        catch (Exception ex)
+        {
+            erroPedidoId = ex.Message;
+        }
+        finally
+        {
+            isLoadingPedidoId = false;
+        }
+    }
+}

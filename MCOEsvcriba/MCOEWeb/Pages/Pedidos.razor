@@ -1,0 +1,607 @@
+@page "/pedidos"
+@inject OescribaDbContext Db
+
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using MCOEWeb.Data
+@using MCOEWeb.Data.Entities
+
+<PageTitle>Pedidos</PageTitle>
+
+<h3>Pedidos</h3>
+
+<div class="row g-2 align-items-end mb-3">
+    <div class="col-md-3 col-lg-2">
+        <label class="form-label small mb-0">Data pedido (de)</label>
+        <input type="date" class="form-control form-control-sm"
+               value="@ToYyyyMmDd(dataPedidoInicioEdicao)"
+               @onchange="@(e => { dataPedidoInicioEdicao = ParseYyyyMmDd(e.Value); })" />
+    </div>
+    <div class="col-md-3 col-lg-2">
+        <label class="form-label small mb-0">Data pedido (até)</label>
+        <input type="date" class="form-control form-control-sm"
+               value="@ToYyyyMmDd(dataPedidoFimEdicao)"
+               @onchange="@(e => { dataPedidoFimEdicao = ParseYyyyMmDd(e.Value); })" />
+    </div>
+    <div class="col-md-2 col-lg-1">
+        <label class="form-label small mb-0">UF</label>
+        <input class="form-control form-control-sm text-uppercase" maxlength="2" placeholder="SP"
+               @bind="filtroUfEdicao" />
+    </div>
+    <div class="col-md-4 col-lg-3">
+        <label class="form-label small mb-0">Cliente</label>
+        <input class="form-control form-control-sm" placeholder="Parte do nome"
+               @bind="filtroClienteEdicao" />
+    </div>
+    <div class="col-md-auto">
+        <button type="button" class="btn btn-primary btn-sm" @onclick="AplicarFiltrosAsync" disabled="@isLoading">
+            @(isLoading ? "…" : "Filtrar")
+        </button>
+    </div>
+    <div class="col-md-auto ms-md-auto">
+        <span class="form-label small mb-0 d-block text-md-end">Visualização</span>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Modo de visualização">
+            <button type="button"
+                    class="btn @(modoVisualizacao == VisualizacaoPedidos.Grid ? "btn-primary" : "btn-outline-primary")"
+                    @onclick="@(() => modoVisualizacao = VisualizacaoPedidos.Grid)">Grid</button>
+            <button type="button"
+                    class="btn @(modoVisualizacao == VisualizacaoPedidos.Cards ? "btn-primary" : "btn-outline-primary")"
+                    @onclick="@(() => modoVisualizacao = VisualizacaoPedidos.Cards)">Cards</button>
+        </div>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="alert alert-info mt-3" role="alert">
+        Carregando dados de <code>CONSOLIDADO_VENDAS</code>...
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(erro))
+{
+    <div class="alert alert-danger mt-3" role="alert">@erro</div>
+}
+else if (!filtrosForamAplicados)
+{
+    <div class="alert alert-secondary mt-3" role="alert">
+        Defina os filtros (opcional) e clique em <strong>Filtrar</strong> para carregar os pedidos.
+    </div>
+}
+else
+{
+    @if (linhas.Count == 0)
+    {
+        <div class="alert alert-warning mt-3" role="alert">
+            Nenhum registro encontrado em <code>CONSOLIDADO_VENDAS</code>@(TemAlgumFiltroAplicado() ? " com os filtros atuais" : "").
+        </div>
+    }
+    else
+    {
+        @if (modoVisualizacao == VisualizacaoPedidos.Grid)
+        {
+            <div class="pedidos-tabela-wrap mt-3">
+                <table class="table table-striped table-sm small mb-0 pedidos-tabela">
+                    <colgroup>
+                        <col class="col-ecom" />
+                        <col class="col-cliente" />
+                        <col class="col-uf" />
+                        <col class="col-val" /><col class="col-val" /><col class="col-val" />
+                        <col class="col-val" /><col class="col-val" /><col class="col-val" /><col class="col-val" />
+                        <col class="col-val" />
+                    </colgroup>
+                    <thead>
+                        <tr>
+                            <th scope="col">Nº e-com.</th>
+                            <th scope="col">Cliente</th>
+                            <th scope="col" class="text-center">UF</th>
+                            <th scope="col" class="text-end text-nowrap">V. venda</th>
+                            <th scope="col" class="text-end text-nowrap">Taxa MP</th>
+                            <th scope="col" class="text-end text-nowrap">Frete</th>
+                            <th scope="col" class="text-end text-nowrap">ICMS</th>
+                            <th scope="col" class="text-end text-nowrap">PIS</th>
+                            <th scope="col" class="text-end text-nowrap">COFINS</th>
+                            <th scope="col" class="text-end text-nowrap">DIFAL</th>
+                            <th scope="col" class="text-end text-nowrap">MC</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var linha in linhas)
+                    {
+                        <tr class="@RowClass(linha.Mc)">
+                            <td class="text-nowrap">@FormatTexto(linha.NumeroEcommerce)</td>
+                            <td class="text-truncate cliente-cell" title="@linha.Dados.Cliente">@linha.Dados.Cliente</td>
+                            <td class="text-center text-nowrap">@linha.Dados.UfVenda</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.ValorVenda)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.TaxaMarketplace)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.ValorFrete)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.Icms)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.Pis)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.Cofins)</td>
+                            <td class="text-end text-nowrap">@FormatCurrency(linha.Dados.Difal)</td>
+                            <td class="text-end text-nowrap">@FormatMc(linha.Mc)</td>
+                        </tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else
+        {
+            <div class="row row-cols-1 row-cols-lg-3 g-3 mt-3 pedidos-cards-grid">
+                @foreach (var linha in linhas)
+                {
+                    <div class="col">
+                        <div class="card h-100 shadow-sm @CardClass(linha.Mc)">
+                            <div class="card-body py-2 px-3 small">
+                                <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <span class="fw-semibold">@linha.Dados.Cliente</span>
+                                    <span class="badge bg-secondary flex-shrink-0">@linha.Dados.UfVenda</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-baseline gap-2 mb-2 pb-2 pedidos-card-linha border-bottom border-secondary-subtle">
+                                    <span class="text-muted">Nº e-com.</span>
+                                    <span class="fw-bold text-end text-break">@FormatTexto(linha.NumeroEcommerce)</span>
+                                </div>
+                                <div class="vstack gap-0 pedidos-card-valores">
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">V. venda</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.ValorVenda)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">Taxa MP</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.TaxaMarketplace)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">Frete</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.ValorFrete)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">ICMS</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.Icms)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">PIS</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.Pis)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">COFINS</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.Cofins)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">DIFAL</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatCurrency(linha.Dados.Difal)</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-baseline gap-2 py-1 pedidos-card-linha">
+                                        <span class="text-muted">MC</span>
+                                        <span class="fw-bold text-nowrap text-end">@FormatMc(linha.Mc)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2 small">
+        <span class="text-muted">
+            @if (totalRegistros == 0)
+            {
+                <text>Nenhum registro.</text>
+            }
+            else
+            {
+                <text>Mostrando @PrimeiroItemPagina–@UltimoItemPagina de @totalRegistros registro(s).</text>
+            }
+        </span>
+        <nav aria-label="Paginação">
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item @(paginaAtual <= 1 || isLoading ? "disabled" : null)">
+                    <button type="button" class="page-link" @onclick="PaginaAnteriorAsync" disabled="@(paginaAtual <= 1 || isLoading || totalRegistros == 0)">Anterior</button>
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link py-1">Página @paginaAtual de @TotalPaginas</span>
+                </li>
+                <li class="page-item @(paginaAtual >= TotalPaginas || isLoading ? "disabled" : null)">
+                    <button type="button" class="page-link" @onclick="PaginaProximaAsync" disabled="@(paginaAtual >= TotalPaginas || isLoading || totalRegistros == 0)">Próxima</button>
+                </li>
+            </ul>
+        </nav>
+    </div>
+    <style>
+        .pedidos-tabela-wrap { overflow-x: auto; }
+        .pedidos-tabela {
+            table-layout: fixed;
+            width: 100%;
+            font-size: 0.78rem;
+        }
+        .pedidos-tabela thead th,
+        .pedidos-tabela tbody td {
+            padding: 0.2rem 0.3rem;
+            vertical-align: middle;
+        }
+        /* Nº e-commerce mais largo; colunas monetárias mais estreitas (24+28+3+8×5.625 = 100%) */
+        .pedidos-tabela .col-ecom { width: 24%; min-width: 7.5rem; }
+        .pedidos-tabela .col-cliente { width: 28%; min-width: 6rem; }
+        .pedidos-tabela .col-uf { width: 3%; min-width: 2rem; }
+        .pedidos-tabela .col-val { width: 5.625%; min-width: 3.1rem; }
+        .pedidos-tabela .cliente-cell {
+            max-width: 0;
+        }
+        .pedidos-cards-grid .card.border-danger {
+            background-color: rgba(var(--bs-danger-rgb), 0.08);
+        }
+        .pedidos-card-linha {
+            min-height: 1.35rem;
+        }
+        .pedidos-card-valores .pedidos-card-linha + .pedidos-card-linha {
+            border-top: 1px solid var(--bs-border-color-translucent);
+        }
+    </style>
+}
+
+@code {
+    private enum VisualizacaoPedidos
+    {
+        Grid,
+        Cards
+    }
+
+    private const int TamanhoPagina = 25;
+
+    private VisualizacaoPedidos modoVisualizacao = VisualizacaoPedidos.Grid;
+
+    private bool isLoading;
+    private string? erro;
+    private List<LinhaConsolidadoMc> linhas = new();
+
+    private bool filtrosForamAplicados;
+    private int paginaAtual = 1;
+    private int totalRegistros;
+
+    private DateTime? dataPedidoInicioEdicao;
+    private DateTime? dataPedidoFimEdicao;
+    private string filtroUfEdicao = string.Empty;
+    private string filtroClienteEdicao = string.Empty;
+
+    private DateTime? dataPedidoInicio;
+    private DateTime? dataPedidoFim;
+    private string filtroUf = string.Empty;
+    private string filtroCliente = string.Empty;
+
+    private int TotalPaginas => totalRegistros <= 0 ? 1 : (totalRegistros + TamanhoPagina - 1) / TamanhoPagina;
+
+    private int PrimeiroItemPagina => totalRegistros == 0 ? 0 : (paginaAtual - 1) * TamanhoPagina + 1;
+
+    private int UltimoItemPagina => totalRegistros == 0 ? 0 : Math.Min(paginaAtual * TamanhoPagina, totalRegistros);
+
+    private async Task AplicarFiltrosAsync()
+    {
+        dataPedidoInicio = dataPedidoInicioEdicao;
+        dataPedidoFim = dataPedidoFimEdicao;
+        filtroUf = filtroUfEdicao ?? string.Empty;
+        filtroCliente = filtroClienteEdicao ?? string.Empty;
+        filtrosForamAplicados = true;
+        paginaAtual = 1;
+        await CarregarDadosAsync();
+    }
+
+    private async Task PaginaAnteriorAsync()
+    {
+        if (paginaAtual <= 1)
+            return;
+        paginaAtual--;
+        await CarregarDadosAsync();
+    }
+
+    private async Task PaginaProximaAsync()
+    {
+        if (paginaAtual >= TotalPaginas)
+            return;
+        paginaAtual++;
+        await CarregarDadosAsync();
+    }
+
+    private async Task CarregarDadosAsync()
+    {
+        if (!filtrosForamAplicados)
+            return;
+
+        isLoading = true;
+        erro = null;
+        try
+        {
+            var consolidados = await QueryConsolidadosFiltradosPaginadoAsync();
+            linhas = await MontarLinhasComMargemAsync(consolidados);
+        }
+        catch (Exception ex)
+        {
+            erro = $"Erro ao carregar dados de CONSOLIDADO_VENDAS: {ex.Message}";
+            linhas.Clear();
+            totalRegistros = 0;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IQueryable<ConsolidadoVendas> BuildConsolidadosQueryAplicado()
+    {
+        IQueryable<ConsolidadoVendas> q;
+
+        if (TemFiltroDataPedido())
+        {
+            var (inicioDia, fimExclusivo) = ObterIntervaloDataPedido();
+            q =
+                from c in Db.ConsolidadoVendas.AsNoTracking()
+                join nf in Db.NotasFiscais.AsNoTracking() on c.IdNota equals nf.IdNotaFiscal
+                join ped in Db.Pedidos.AsNoTracking() on nf.IdPedido!.Trim() equals ped.IdTiny
+                where ped.DataPedido >= inicioDia && ped.DataPedido < fimExclusivo
+                select c;
+        }
+        else
+        {
+            q = Db.ConsolidadoVendas.AsNoTracking();
+        }
+
+        if (!string.IsNullOrWhiteSpace(filtroUf))
+        {
+            var uf = NormalizarUf(filtroUf);
+            if (uf.Length > 0)
+                q = q.Where(c => c.UfVenda == uf);
+        }
+
+        if (!string.IsNullOrWhiteSpace(filtroCliente))
+        {
+            var termo = filtroCliente.Trim();
+            q = q.Where(c => c.Cliente.Contains(termo));
+        }
+
+        return q;
+    }
+
+    private async Task<List<ConsolidadoVendas>> QueryConsolidadosFiltradosPaginadoAsync()
+    {
+        var q = BuildConsolidadosQueryAplicado();
+
+        totalRegistros = await q
+            .Select(c => c.IdConsolidacao)
+            .Distinct()
+            .CountAsync();
+
+        if (totalRegistros == 0)
+            return new List<ConsolidadoVendas>();
+
+        var totalPaginas = (totalRegistros + TamanhoPagina - 1) / TamanhoPagina;
+        if (paginaAtual > totalPaginas)
+            paginaAtual = totalPaginas;
+        if (paginaAtual < 1)
+            paginaAtual = 1;
+
+        var skip = (paginaAtual - 1) * TamanhoPagina;
+
+        var ids = await q
+            .Select(c => c.IdConsolidacao)
+            .Distinct()
+            .OrderByDescending(id => id)
+            .Skip(skip)
+            .Take(TamanhoPagina)
+            .ToListAsync();
+
+        if (ids.Count == 0)
+            return new List<ConsolidadoVendas>();
+
+        return await Db.ConsolidadoVendas
+            .AsNoTracking()
+            .Where(c => ids.Contains(c.IdConsolidacao))
+            .OrderByDescending(c => c.IdConsolidacao)
+            .ToListAsync();
+    }
+
+    private bool TemFiltroDataPedido() => dataPedidoInicio.HasValue || dataPedidoFim.HasValue;
+
+    private bool TemAlgumFiltroAplicado() =>
+        TemFiltroDataPedido()
+        || !string.IsNullOrWhiteSpace(filtroUf)
+        || !string.IsNullOrWhiteSpace(filtroCliente);
+
+    private (DateTime InicioDia, DateTime FimExclusivo) ObterIntervaloDataPedido()
+    {
+        var i = dataPedidoInicio?.Date;
+        var f = dataPedidoFim?.Date;
+        DateTime inicio;
+        DateTime fimInclusivo;
+        if (i.HasValue && f.HasValue)
+        {
+            inicio = i.Value;
+            fimInclusivo = f.Value;
+            if (inicio > fimInclusivo)
+                (inicio, fimInclusivo) = (fimInclusivo, inicio);
+        }
+        else if (i.HasValue)
+        {
+            inicio = i.Value;
+            fimInclusivo = i.Value;
+        }
+        else
+        {
+            fimInclusivo = f!.Value;
+            inicio = fimInclusivo;
+        }
+
+        return (inicio, fimInclusivo.AddDays(1));
+    }
+
+    private static string NormalizarUf(string uf)
+    {
+        var t = uf.Trim().ToUpperInvariant();
+        return t.Length <= 2 ? t : t[..2];
+    }
+
+    private static string? ToYyyyMmDd(DateTime? d) =>
+        d.HasValue ? d.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null;
+
+    private static DateTime? ParseYyyyMmDd(object? v)
+    {
+        var s = v?.ToString();
+        if (string.IsNullOrWhiteSpace(s))
+            return null;
+        return DateTime.ParseExact(s.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    private static string? RowClass(decimal? mc) =>
+        mc is < 0m ? "table-danger" : null;
+
+    private static string CardClass(decimal? mc) =>
+        mc is < 0m ? "border-danger" : "border-light";
+
+    /// <summary>
+    /// MC = VALOR_VENDA - (TAXA_MARKETPLACE + VALOR_FRETE + ICMS + PIS + COFINS + DIFAL + soma custos),
+    /// com custo por item = PRECO_CUSTO (PRODUTOS) × Quantidade (ItensPedido), via NOTAS_FISCAIS → PEDIDOS → ItensPedido → PRODUTOS.
+    /// </summary>
+    private async Task<List<LinhaConsolidadoMc>> MontarLinhasComMargemAsync(List<ConsolidadoVendas> consolidados)
+    {
+        if (consolidados.Count == 0)
+            return new List<LinhaConsolidadoMc>();
+
+        var idNotas = consolidados.Select(c => c.IdNota).Distinct().ToList();
+
+        var notasList = await Db.NotasFiscais
+            .AsNoTracking()
+            .Where(n => idNotas.Contains(n.IdNotaFiscal))
+            .ToListAsync();
+
+        var notaPorIdNota = notasList
+            .GroupBy(n => n.IdNotaFiscal)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var idTinysPedido = notaPorIdNota.Values
+            .Select(n => (n.IdPedido ?? "").Trim())
+            .Where(s => s.Length > 0)
+            .Distinct()
+            .ToList();
+
+        var pedidosList = idTinysPedido.Count == 0
+            ? new List<Pedido>()
+            : await Db.Pedidos
+                .AsNoTracking()
+                .Where(p => idTinysPedido.Contains(p.IdTiny))
+                .ToListAsync();
+
+        var pedidoPorIdTiny = pedidosList
+            .GroupBy(p => p.IdTiny)
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var idsPedidoInterno = pedidosList.Select(p => (long)p.IdPedido).Distinct().ToList();
+
+        var itensList = idsPedidoInterno.Count == 0
+            ? new List<ItensPedido>()
+            : await Db.ItensPedidos
+                .AsNoTracking()
+                .Where(i => i.IdPedido.HasValue && idsPedidoInterno.Contains(i.IdPedido.Value))
+                .ToListAsync();
+
+        var itensPorPedido = itensList
+            .GroupBy(i => i.IdPedido!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var chavesProdutoTiny = itensList
+            .Where(i => i.IdProduto.HasValue)
+            .Select(i => IdProdutoParaChaveTiny(i.IdProduto!.Value))
+            .Where(k => k.Length > 0)
+            .Distinct()
+            .ToList();
+
+        var produtosList = chavesProdutoTiny.Count == 0
+            ? new List<Produto>()
+            : await Db.Produtos
+                .AsNoTracking()
+                .Where(p => chavesProdutoTiny.Contains(p.IdProdutoTiny))
+                .ToListAsync();
+
+        var custoPorIdProdutoTiny = produtosList.ToDictionary(p => p.IdProdutoTiny, p => p.PrecoCusto);
+
+        var resultado = new List<LinhaConsolidadoMc>(consolidados.Count);
+
+        foreach (var c in consolidados)
+        {
+            decimal? mc = null;
+            string? numeroEcommerce = null;
+
+            if (notaPorIdNota.TryGetValue(c.IdNota, out var nf))
+            {
+                var idTiny = (nf.IdPedido ?? "").Trim();
+                if (idTiny.Length > 0 && pedidoPorIdTiny.TryGetValue(idTiny, out var ped))
+                {
+                    numeroEcommerce = string.IsNullOrWhiteSpace(ped.NumeroEcommerce) ? null : ped.NumeroEcommerce.Trim();
+                    var somaCusto = SomarCustoItensPedido((long)ped.IdPedido, itensPorPedido, custoPorIdProdutoTiny);
+                    mc = CalcularMargemContribuicao(c, somaCusto);
+                }
+            }
+
+            resultado.Add(new LinhaConsolidadoMc { Dados = c, Mc = mc, NumeroEcommerce = numeroEcommerce });
+        }
+
+        return resultado;
+    }
+
+    private static string IdProdutoParaChaveTiny(long idProdutoTiny) =>
+        idProdutoTiny.ToString(CultureInfo.InvariantCulture);
+
+    private static decimal SomarCustoItensPedido(
+        long idPedidoInterno,
+        IReadOnlyDictionary<long, List<ItensPedido>> itensPorPedido,
+        IReadOnlyDictionary<string, decimal> custoPorIdProdutoTiny)
+    {
+        if (!itensPorPedido.TryGetValue(idPedidoInterno, out var itens))
+            return 0m;
+
+        decimal soma = 0;
+        foreach (var it in itens)
+        {
+            if (!it.IdProduto.HasValue)
+                continue;
+
+            var chave = IdProdutoParaChaveTiny(it.IdProduto.Value);
+            if (!custoPorIdProdutoTiny.TryGetValue(chave, out var precoCusto))
+                continue;
+
+            var q = it.Quantidade ?? 1m;
+            soma += precoCusto * q;
+        }
+
+        return soma;
+    }
+
+    /// <summary>
+    /// MC = VALOR_VENDA - (COALESCE(taxa,0) + frete + ICMS + PIS + COFINS + DIFAL + soma dos custos).
+    /// </summary>
+    private static decimal CalcularMargemContribuicao(ConsolidadoVendas a, decimal somaPrecoCustoProdutos)
+    {
+        var vv = a.ValorVenda ?? 0m;
+        var taxa = a.TaxaMarketplace ?? 0m;
+        var frete = a.ValorFrete ?? 0m;
+        var icms = a.Icms ?? 0m;
+        var pis = a.Pis ?? 0m;
+        var cofins = a.Cofins ?? 0m;
+        var difal = a.Difal ?? 0m;
+
+        return vv - (taxa + frete + icms + pis + cofins + difal + somaPrecoCustoProdutos);
+    }
+
+    private static string FormatCurrency(decimal? valor) =>
+        valor.HasValue ? valor.Value.ToString("C2", CultureInfo.GetCultureInfo("pt-BR")) : "-";
+
+    private static string FormatMc(decimal? valor) =>
+        valor.HasValue ? valor.Value.ToString("C2", CultureInfo.GetCultureInfo("pt-BR")) : "-";
+
+    private static string FormatTexto(string? valor) =>
+        string.IsNullOrWhiteSpace(valor) ? "-" : valor;
+
+    private sealed class LinhaConsolidadoMc
+    {
+        public required ConsolidadoVendas Dados { get; init; }
+        public decimal? Mc { get; init; }
+        public string? NumeroEcommerce { get; init; }
+    }
+}

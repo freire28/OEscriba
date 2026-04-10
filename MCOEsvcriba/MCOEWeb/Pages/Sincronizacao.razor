@@ -1,0 +1,247 @@
+@page "/sincronizacao"
+@inject PedidosSincronizacaoService SincronizacaoService
+@inject ProdutosSincronizacaoService ProdutosSincronizacaoService
+@inject IConfiguration Configuration
+@inject OescribaDbContext Db
+
+@using System.Globalization
+@using Microsoft.EntityFrameworkCore
+@using MCOEWeb.Data
+<PageTitle>Sincronização</PageTitle>
+
+<h1>Sincronização de pedidos</h1>
+
+<p class="text-muted small">
+    Busca pedidos na API Tiny para o <strong>dia</strong> selecionado (mesma data em <code>dataInicial</code> e <code>dataFinal</code>)
+    e insere em <code>dbo.PEDIDOS</code> apenas quando o <code>id</code> do JSON <strong>ainda não existir</strong> em <code>ID_TINY</code>.
+    Campos: <code>ID_TINY</code> ← id, <code>numero_ecommerce</code>, <code>DATA_PEDIDO</code> ← data do pedido,
+    <code>DATA_SINCRONIZACAO</code> ← data/hora atual.
+    (2) Para cada pedido <strong>novo</strong>, <code>pedido.obter.php</code> grava <code>id_nota_fiscal</code> e <code>dbo.ItensPedido</code>.
+    (3–4) <code>SELECT</code> em <code>PEDIDOS</code> com <code>DATA_PEDIDO</code> no dia filtrado e <code>id_nota_fiscal</code> preenchido (inclui pedidos recém-inseridos nesta execução);
+    para cada um, <code>nota.fiscal.obter.xml.php</code> → <code>dbo.NOTAS_FISCAIS</code> (sem busca por e-commerce).
+</p>
+
+<div class="row g-3 mb-3">
+    <div class="col-md-4">
+        <label class="form-label">Data a sincronizar</label>
+        <input type="date" class="form-control" @bind="dataSincronizacao" disabled="@sincronizando" />
+    </div>
+    <div class="col-md-6">
+        <label class="form-label">Token da API Tiny</label>
+        <input class="form-control" @bind="token" autocomplete="off" disabled="@sincronizando" placeholder="TinyApi:Token ou TINY_API_TOKEN" />
+    </div>
+</div>
+
+<div class="mb-3">
+    <div class="form-check d-flex flex-wrap align-items-baseline column-gap-2">
+        <input class="form-check-input" type="checkbox" id="chkPedidos" @bind="sincronizarPedidos" disabled="@sincronizando" />
+        <label class="form-check-label mb-0" for="chkPedidos">Sincronizar pedidos</label>
+        <span class="text-muted small ms-3">Última Sincronização: <strong class="text-body">@FormatarDataUltimaSinc(ultimaDataSincPedidos)</strong></span>
+    </div>
+    <div class="form-check d-flex flex-wrap align-items-baseline column-gap-2">
+        <input class="form-check-input" type="checkbox" id="chkProdutos" @bind="sincronizarProdutos" disabled="@sincronizando" />
+        <label class="form-check-label mb-0" for="chkProdutos">Sincronizar produtos</label>
+        <span class="text-muted small ms-3">Última Sincronização: <strong class="text-body">@FormatarDataUltimaSinc(ultimaDataSincProdutos)</strong></span>
+    </div>
+</div>
+
+<button type="button" class="btn btn-primary" disabled="@sincronizando" @onclick="ExecutarSincronizacao">
+    @(sincronizando ? "Sincronizando…" : "Sincronizar")
+</button>
+
+@if (!string.IsNullOrWhiteSpace(erro))
+{
+    <div class="alert alert-danger mt-3">@erro</div>
+}
+
+<div class="mt-4">
+    <label class="form-label small text-muted mb-1">Progresso</label>
+    <div class="progress" style="height: 28px;" role="progressbar" aria-valuenow="@percentual" aria-valuemin="0" aria-valuemax="100">
+        <div class="progress-bar @(percentual >= 100 ? "bg-success" : "progress-bar-striped progress-bar-animated")"
+             style="width: @(percentual)%">
+            @percentual%
+        </div>
+    </div>
+    <p class="small text-muted mt-2 mb-0">@mensagemStatus</p>
+</div>
+
+@if (ultimoResultado is not null && !sincronizando && string.IsNullOrWhiteSpace(erro))
+{
+    <div class="alert alert-light border mt-3 small">
+        Pedidos — Recebidos: @ultimoResultado.TotalRecebidos · Inseridos: @ultimoResultado.Inseridos · Já existiam (ID_TINY): @ultimoResultado.JaExistiamNoBanco · Sem id no JSON: @ultimoResultado.IgnoradosSemId
+        <br />
+        Itens — Linhas em ItensPedido: @ultimoResultado.ItensPedidoInseridos · Detalhe pedido sem OK: @ultimoResultado.DetalhesPedidoSemRespostaOk
+        <br />
+        NF-e — Gravadas: @ultimoResultado.NotasFiscaisInseridas · Falha ao obter XML: @ultimoResultado.NotasFiscaisSemNotaNaAPI · Ignoradas (dup./XML inválido): @ultimoResultado.NotasFiscaisIgnoradasDuplicadaOuErro
+        <br />
+        Consolidação — <code>CONSOLIDADO_VENDAS</code>: @ultimoResultado.ConsolidadoVendasInseridas inserida(s) · Não processadas (XML): @ultimoResultado.ConsolidadoVendasNaoProcessadas
+    </div>
+}
+
+@if (resultadoProdutos is not null && !sincronizando)
+{
+    <div class="alert alert-light border mt-3 small">
+        Produtos — Novos: @resultadoProdutos.Inseridos · Atualizados: @resultadoProdutos.Atualizados · Ignorados (sem id): @resultadoProdutos.IgnoradosSemId
+    </div>
+}
+
+@code {
+    private DateTime? dataSincronizacao;
+    private string token = string.Empty;
+    private bool sincronizarPedidos = true;
+    private bool sincronizarProdutos;
+
+    private bool sincronizando;
+    private string? erro;
+    private int percentual;
+    private string mensagemStatus = "Aguardando.";
+    private SincronizacaoPedidosResultado? ultimoResultado;
+    private ProdutosSincronizacaoResultado? resultadoProdutos;
+    private DateTime? ultimaDataSincPedidos;
+    private DateTime? ultimaDataSincProdutos;
+
+    protected override async Task OnInitializedAsync()
+    {
+        token = FirstNonEmpty(
+            Configuration["TinyApi:Token"],
+            Environment.GetEnvironmentVariable("TINY_API_TOKEN")) ?? "";
+
+        dataSincronizacao = DateTime.Today;
+        await CarregarUltimasDatasSincronizacaoAsync();
+    }
+
+    private async Task CarregarUltimasDatasSincronizacaoAsync()
+    {
+        ultimaDataSincPedidos = await Db.Sincronizacoes.AsNoTracking()
+            .Where(s => s.Pedidos)
+            .OrderByDescending(s => s.DataSincronizacao)
+            .Select(s => (DateTime?)s.DataSincronizacao)
+            .FirstOrDefaultAsync();
+
+        ultimaDataSincProdutos = await Db.Sincronizacoes.AsNoTracking()
+            .Where(s => s.Produtos)
+            .OrderByDescending(s => s.DataSincronizacao)
+            .Select(s => (DateTime?)s.DataSincronizacao)
+            .FirstOrDefaultAsync();
+    }
+
+    private static string FormatarDataUltimaSinc(DateTime? data) =>
+        data is { } d ? d.ToString("dd/MM/yyyy HH:mm", CultureInfo.GetCultureInfo("pt-BR")) : "—";
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var v in values)
+        {
+            if (!string.IsNullOrWhiteSpace(v))
+                return v.Trim();
+        }
+        return null;
+    }
+
+    private async Task ExecutarSincronizacao()
+    {
+        erro = null;
+        ultimoResultado = null;
+        resultadoProdutos = null;
+        percentual = 0;
+        mensagemStatus = "Iniciando…";
+
+        if (dataSincronizacao is null)
+        {
+            erro = "Informe a data a ser sincronizada.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            erro = "Informe o token da API Tiny.";
+            return;
+        }
+
+        if (!sincronizarPedidos && !sincronizarProdutos)
+        {
+            erro = "Marque ao menos uma opção: Sincronizar pedidos ou Sincronizar produtos.";
+            return;
+        }
+
+        var marcouPedidos = sincronizarPedidos;
+        var marcouProdutos = sincronizarProdutos;
+
+        sincronizando = true;
+        StateHasChanged();
+
+        IProgress<SincronizacaoProgresso> progressoUi = new Progress<SincronizacaoProgresso>(p =>
+        {
+            _ = InvokeAsync(() =>
+            {
+                percentual = Math.Clamp(p.Percentual, 0, 100);
+                mensagemStatus = p.Mensagem;
+                StateHasChanged();
+            });
+        });
+
+        try
+        {
+            var pedidosEProdutos = marcouPedidos && marcouProdutos;
+
+            IProgress<SincronizacaoProgresso>? progressoPedidos = null;
+            if (pedidosEProdutos)
+            {
+                progressoPedidos = new Progress<SincronizacaoProgresso>(p =>
+                {
+                    var pct = (int)(p.Percentual * 0.5m);
+                    progressoUi.Report(new SincronizacaoProgresso(Math.Clamp(pct, 0, 50), p.Mensagem));
+                });
+            }
+
+            if (marcouPedidos)
+            {
+                ultimoResultado = await SincronizacaoService.SincronizarPorDataAsync(
+                    token.Trim(),
+                    dataSincronizacao.Value,
+                    progressoPedidos ?? progressoUi);
+            }
+            else
+            {
+                ultimoResultado = null;
+            }
+
+            if (marcouProdutos)
+            {
+                resultadoProdutos = await ProdutosSincronizacaoService.SincronizarDoTinyAsync(
+                    token.Trim(),
+                    progressoUi,
+                    pedidosEProdutos ? 50 : 0,
+                    pedidosEProdutos ? 50 : 100);
+            }
+        }
+        catch (Exception ex)
+        {
+            erro = ex.Message;
+            percentual = 0;
+            mensagemStatus = "Erro.";
+        }
+        finally
+        {
+            sincronizando = false;
+            try
+            {
+                Db.Sincronizacoes.Add(new global::MCOEWeb.Data.Entities.Sincronizacao
+                {
+                    DataSincronizacao = DateTime.Now,
+                    Pedidos = marcouPedidos,
+                    Produtos = marcouProdutos
+                });
+                await Db.SaveChangesAsync();
+            }
+            catch (Exception exReg)
+            {
+                var msg = $"Falha ao gravar registro em SINCRONIZACOES: {exReg.Message}";
+                erro = string.IsNullOrEmpty(erro) ? msg : $"{erro} {msg}";
+            }
+
+            await CarregarUltimasDatasSincronizacaoAsync();
+            StateHasChanged();
+        }
+    }
+}

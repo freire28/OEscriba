@@ -1,0 +1,157 @@
+@page "/notas-fiscais"
+@inject MCOEWeb.Services.TinyApiClient TinyApi
+
+@using System.Globalization
+
+<PageTitle>Notas Fiscais</PageTitle>
+
+<h3>Notas fiscais — pesquisa</h3>
+
+<div class="mb-3">
+    <label class="form-label">Token da API Tiny</label>
+    <input class="form-control" @bind="token" />
+</div>
+
+<div class="mb-3">
+    <label class="form-label">Página</label>
+    <input type="number" class="form-control" @bind="pagina" min="1" />
+</div>
+
+<button type="button" class="btn btn-primary" @onclick="CarregarNotas" disabled="@isLoading">
+    @(isLoading ? "Carregando..." : "Carregar notas fiscais")
+</button>
+
+@if (!string.IsNullOrWhiteSpace(erro))
+{
+    <div class="alert alert-danger mt-3">@erro</div>
+}
+
+@if (notas.Count > 0)
+{
+    <table class="table table-striped table-sm mt-3">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Número</th>
+                <th>Série</th>
+                <th>Data emissão</th>
+                <th>Cliente</th>
+                <th class="text-end">Valor produtos</th>
+                <th class="text-end">Valor frete</th>
+                <th>Situação</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var n in notas)
+        {
+            <tr>
+                <td>@n.Id</td>
+                <td>@n.Numero</td>
+                <td>@n.Serie</td>
+                <td>@n.DataEmissao</td>
+                <td>@n.NomeCliente</td>
+                <td class="text-end">@FormatCurrency(n.ValorProdutos)</td>
+                <td class="text-end">@FormatCurrency(n.ValorFrete)</td>
+                <td>@n.DescricaoSituacao</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private string token = string.Empty;
+    private int pagina = 1;
+    private bool isLoading;
+    private string? erro;
+    private List<NotaFiscalResumo> notas = new();
+
+    private async Task CarregarNotas()
+    {
+        erro = null;
+        notas.Clear();
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            erro = "Informe o token da API Tiny.";
+            return;
+        }
+
+        if (pagina < 1)
+            pagina = 1;
+
+        isLoading = true;
+
+        try
+        {
+            var filtros = new Dictionary<string, string>
+            {
+                ["pagina"] = pagina.ToString(CultureInfo.InvariantCulture)
+            };
+
+            var root = await TinyApi.ListarNotasFiscaisAsync(token.Trim(), filtros);
+            var ret = root.Retorno;
+
+            if (ret is null)
+            {
+                erro = "Resposta inválida da API Tiny.";
+                return;
+            }
+
+            if (!string.Equals(ret.Status, "OK", StringComparison.OrdinalIgnoreCase))
+            {
+                erro = ret.Erros?.FirstOrDefault()?.Erro ?? ret.Status ?? "Erro na pesquisa.";
+                return;
+            }
+
+            var listaNotas = ret.NotasFiscais;
+            if (listaNotas is null || listaNotas.Count == 0)
+            {
+                erro = "Nenhuma nota fiscal encontrada.";
+                return;
+            }
+
+            foreach (var wrapper in listaNotas)
+            {
+                var nf = wrapper.NotaFiscal;
+                if (nf is null)
+                    continue;
+
+                notas.Add(new NotaFiscalResumo
+                {
+                    Id = nf.Id ?? "",
+                    Numero = nf.Numero ?? "",
+                    Serie = nf.Serie ?? "",
+                    DataEmissao = nf.DataEmissao ?? "",
+                    NomeCliente = nf.Nome ?? "",
+                    ValorProdutos = nf.ValorProdutos,
+                    ValorFrete = nf.ValorFrete,
+                    DescricaoSituacao = nf.DescricaoSituacao ?? nf.Situacao ?? ""
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            erro = $"Erro ao carregar notas fiscais: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string FormatCurrency(decimal? value)
+        => value.HasValue ? value.Value.ToString("C2", new CultureInfo("pt-BR")) : "-";
+
+    private class NotaFiscalResumo
+    {
+        public string Id { get; set; } = "";
+        public string Numero { get; set; } = "";
+        public string Serie { get; set; } = "";
+        public string DataEmissao { get; set; } = "";
+        public string NomeCliente { get; set; } = "";
+        public decimal? ValorProdutos { get; set; }
+        public decimal? ValorFrete { get; set; }
+        public string DescricaoSituacao { get; set; } = "";
+    }
+}
