@@ -12,16 +12,20 @@ namespace MCOEWeb.Services;
 /// (3) <c>SELECT</c> em <c>PEDIDOS</c> pela data do filtro (e pedidos inseridos nesta execução) com <c>id_nota_fiscal</c> preenchido.
 /// (4) Para cada um, <c>nota.fiscal.obter.xml.php</c> e grava em <c>NOTAS_FISCAIS</c>.
 /// (5) <c>NOTAS_FISCAIS</c> com <c>CONSOLIDADA</c> = 0: lê o XML, grava em <c>CONSOLIDADO_VENDAS</c> e marca <c>CONSOLIDADA</c> = 1.
+/// (6) Para cada linha recém-consolidada, <c>GET /orders/{id}</c> no Mercado Livre com <see cref="Pedido.NumeroEcommerce"/> (id do pedido ML)
+/// e atualiza <see cref="ConsolidadoVendas.TaxaMarketplace"/> e <see cref="ConsolidadoVendas.ValorFrete"/> (token renovado automaticamente quando expira).
 /// </summary>
 public class PedidosSincronizacaoService
 {
     private readonly TinyApiClient _tiny;
     private readonly OescribaDbContext _db;
+    private readonly MercadoLivreApiClient _mercadoLivre;
 
-    public PedidosSincronizacaoService(TinyApiClient tiny, OescribaDbContext db)
+    public PedidosSincronizacaoService(TinyApiClient tiny, OescribaDbContext db, MercadoLivreApiClient mercadoLivre)
     {
         _tiny = tiny;
         _db = db;
+        _mercadoLivre = mercadoLivre;
     }
 
     /// <summary>
@@ -87,11 +91,14 @@ public class PedidosSincronizacaoService
         if (total == 0)
         {
             progresso?.Report(new SincronizacaoProgresso(98, "Nenhum pedido para a data — consolidando NF-e pendentes…"));
-            var (c0, e0) = await ConsolidarNotasFiscaisPendentesAsync(progresso, cancellationToken);
+            var (c0, e0, idNotas0) = await ConsolidarNotasFiscaisPendentesAsync(progresso, cancellationToken);
+            var ml0 = await EnriquecerConsolidadoComMercadoLivreAsync(idNotas0, progresso, cancellationToken);
             progresso?.Report(new SincronizacaoProgresso(100,
-                $"Nenhum pedido encontrado para esta data. Consolidação: {c0} linha(s) em CONSOLIDADO_VENDAS, {e0} nota(s) com XML inválido."));
+                $"Nenhum pedido encontrado para esta data. Consolidação: {c0} linha(s) em CONSOLIDADO_VENDAS, {e0} nota(s) com XML inválido. " +
+                $"Mercado Livre: {ml0.Atualizados} atualizado(s), {ml0.Pulados} pulado(s), {ml0.Erros} erro(s)."));
             return new SincronizacaoPedidosResultado(0, 0, 0, 0,
-                ConsolidadoVendasInseridas: c0, ConsolidadoVendasNaoProcessadas: e0);
+                ConsolidadoVendasInseridas: c0, ConsolidadoVendasNaoProcessadas: e0,
+                MercadoLivreConsolidadosAtualizados: ml0.Atualizados, MercadoLivrePulados: ml0.Pulados, MercadoLivreErros: ml0.Erros);
         }
 
         var inseridos = 0;
@@ -220,24 +227,29 @@ public class PedidosSincronizacaoService
         }
 
         progresso?.Report(new SincronizacaoProgresso(98, "Consolidando NF-e com CONSOLIDADA = 0 → CONSOLIDADO_VENDAS…"));
-        var (consolidadasInseridas, consolidadasErroXml) = await ConsolidarNotasFiscaisPendentesAsync(progresso, cancellationToken);
+        var (consolidadasInseridas, consolidadasErroXml, idNotasConsolidadas) =
+            await ConsolidarNotasFiscaisPendentesAsync(progresso, cancellationToken);
+
+        var ml = await EnriquecerConsolidadoComMercadoLivreAsync(idNotasConsolidadas, progresso, cancellationToken);
 
         progresso?.Report(new SincronizacaoProgresso(100,
             $"Concluído: {inseridos} pedido(s) inserido(s), {jaExistiam} já existente(s), {ignoradosSemId} sem id; " +
             $"itens: {itensPedidoInseridos} linha(s), detalhe sem OK: {detalhesPedidoSemOk}; " +
             $"NF-e: {nfInseridas} gravada(s), {nfSemNotaNaApi} falha ao obter XML, {nfIgnoradas} ignorada(s) (duplicada/XML inválido); " +
-            $"consolidação: {consolidadasInseridas} em CONSOLIDADO_VENDAS, {consolidadasErroXml} nota(s) não processadas (XML)."));
+            $"consolidação: {consolidadasInseridas} em CONSOLIDADO_VENDAS, {consolidadasErroXml} nota(s) não processadas (XML); " +
+            $"Mercado Livre: {ml.Atualizados} atualizado(s), {ml.Pulados} pulado(s), {ml.Erros} erro(s)."));
         return new SincronizacaoPedidosResultado(
             inseridos, jaExistiam, ignoradosSemId, total,
             nfInseridas, 0, nfSemNotaNaApi, nfIgnoradas,
             itensPedidoInseridos, detalhesPedidoSemOk,
-            consolidadasInseridas, consolidadasErroXml);
+            consolidadasInseridas, consolidadasErroXml,
+            ml.Atualizados, ml.Pulados, ml.Erros);
     }
 
     /// <summary>
     /// Lê <c>NOTAS_FISCAIS</c> com <c>CONSOLIDADA</c> = 0, extrai totais do XML (NF-e) e grava em <c>CONSOLIDADO_VENDAS</c>.
     /// </summary>
-    private async Task<(int Inseridas, int ErroXml)> ConsolidarNotasFiscaisPendentesAsync(
+    private async Task<(int Inseridas, int ErroXml, List<int> IdNotasFiscaisInseridas)> ConsolidarNotasFiscaisPendentesAsync(
         IProgress<SincronizacaoProgresso>? progresso,
         CancellationToken cancellationToken)
     {
@@ -246,10 +258,11 @@ public class PedidosSincronizacaoService
             .ToListAsync(cancellationToken);
 
         if (pendentes.Count == 0)
-            return (0, 0);
+            return (0, 0, new List<int>());
 
         var inseridas = 0;
         var erroXml = 0;
+        var idNotasInseridas = new List<int>();
         var total = pendentes.Count;
 
         for (var i = 0; i < total; i++)
@@ -270,13 +283,109 @@ public class PedidosSincronizacaoService
             nf.Consolidada = true;
             await _db.SaveChangesAsync(cancellationToken);
             inseridas++;
+            idNotasInseridas.Add(nf.IdNotaFiscal);
         }
 
-        return (inseridas, erroXml);
+        return (inseridas, erroXml, idNotasInseridas);
     }
 
     /// <summary>
-    /// Extrai cliente/UF de <c>dest</c>/<c>enderDest</c> e totais de <c>ICMSTot</c> (vNF, vICMS, vPIS, vCOFINS).
+    /// Atualiza <c>TAXA_MARKETPLACE</c> e <c>VALOR_FRETE</c> via API do Mercado Livre (<c>sale_fee</c> / frete no JSON do pedido).
+    /// Só processa NF-e consolidadas nesta execução. Sem token ML válido/refresh, marca todas como puladas.
+    /// </summary>
+    private async Task<(int Atualizados, int Pulados, int Erros)> EnriquecerConsolidadoComMercadoLivreAsync(
+        IReadOnlyList<int> idNotasFiscaisConsolidadasNestaExecucao,
+        IProgress<SincronizacaoProgresso>? progresso,
+        CancellationToken cancellationToken)
+    {
+        if (idNotasFiscaisConsolidadasNestaExecucao.Count == 0)
+            return (0, 0, 0);
+
+        if (!_mercadoLivre.TemTokenParaChamadasApi())
+            return (0, idNotasFiscaisConsolidadasNestaExecucao.Count, 0);
+
+        var atualizados = 0;
+        var pulados = 0;
+        var erros = 0;
+        var total = idNotasFiscaisConsolidadasNestaExecucao.Count;
+
+        for (var i = 0; i < total; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var idNf = idNotasFiscaisConsolidadasNestaExecucao[i];
+            progresso?.Report(new SincronizacaoProgresso(99,
+                $"Mercado Livre — {i + 1} de {total} (NF id {idNf})…"));
+
+            try
+            {
+                var consolidado = await _db.ConsolidadoVendas
+                    .FirstOrDefaultAsync(c => c.IdNota == idNf, cancellationToken);
+                if (consolidado is null)
+                {
+                    pulados++;
+                    continue;
+                }
+
+                var nf = await _db.NotasFiscais.AsNoTracking()
+                    .FirstOrDefaultAsync(n => n.IdNotaFiscal == idNf, cancellationToken);
+                if (nf is null)
+                {
+                    pulados++;
+                    continue;
+                }
+
+                var idPedidoTiny = (nf.IdPedido ?? "").Trim();
+                if (idPedidoTiny.Length == 0)
+                {
+                    pulados++;
+                    continue;
+                }
+
+                var ped = await _db.Pedidos.AsNoTracking()
+                    .FirstOrDefaultAsync(p => p.IdTiny == idPedidoTiny, cancellationToken);
+                var orderIdMl = (ped?.NumeroEcommerce ?? "").Trim();
+                if (orderIdMl.Length == 0 || !orderIdMl.All(char.IsAsciiDigit))
+                {
+                    pulados++;
+                    continue;
+                }
+
+                var (saleFee, shippingCost) = await _mercadoLivre.ObterSaleFeeEFreteDoPedidoAsync(orderIdMl, cancellationToken);
+
+                var alterou = false;
+                if (saleFee.HasValue)
+                {
+                    consolidado.TaxaMarketplace = saleFee;
+                    alterou = true;
+                }
+                if (shippingCost.HasValue)
+                {
+                    consolidado.ValorFrete = shippingCost;
+                    alterou = true;
+                }
+
+                if (!alterou)
+                {
+                    pulados++;
+                    continue;
+                }
+
+                await _db.SaveChangesAsync(cancellationToken);
+                atualizados++;
+            }
+            catch
+            {
+                erros++;
+            }
+        }
+
+        return (atualizados, pulados, erros);
+    }
+
+    /// <summary>
+    /// Extrai cliente/UF de <c>dest</c>/<c>enderDest</c> e totais de <c>ICMSTot</c>
+    /// (vNF, vICMS, vPIS, vCOFINS, <c>vICMSUFDest</c> → imposto DIFAL em <see cref="ConsolidadoVendas.Difal"/>).
     /// </summary>
     private static bool TryExtrairConsolidadoVendas(string xmlNota, int idNotaFiscal, out ConsolidadoVendas linha)
     {
@@ -318,6 +427,8 @@ public class PedidosSincronizacaoService
         linha.Icms = ParseDecimalNullable(ElementLocalText(icmsTot, "vICMS"));
         linha.Pis = ParseDecimalNullable(ElementLocalText(icmsTot, "vPIS"));
         linha.Cofins = ParseDecimalNullable(ElementLocalText(icmsTot, "vCOFINS"));
+        // DIFAL (total ICMS UF destino) — grupo ICMSTot, layout NF-e
+        linha.Difal = ParseDecimalNullable(ElementLocalText(icmsTot, "vICMSUFDest"));
 
         return true;
     }
@@ -630,6 +741,9 @@ public record SincronizacaoProgresso(int Percentual, string Mensagem);
 /// <param name="DetalhesPedidoSemRespostaOk">Pedidos inseridos cuja chamada a <c>pedido.obter</c> não retornou OK ou falhou.</param>
 /// <param name="ConsolidadoVendasInseridas">Linhas gravadas em <c>CONSOLIDADO_VENDAS</c> a partir de <c>NOTAS_FISCAIS</c> com <c>CONSOLIDADA</c> = 0.</param>
 /// <param name="ConsolidadoVendasNaoProcessadas">Notas não consolidadas (XML inválido ou estrutura sem <c>dest</c>/<c>ICMSTot</c>).</param>
+/// <param name="MercadoLivreConsolidadosAtualizados">Linhas em <c>CONSOLIDADO_VENDAS</c> com taxa/frete preenchidas via ML nesta execução.</param>
+/// <param name="MercadoLivrePulados">Sem credenciais ML, sem <c>numero_ecommerce</c>, pedido ML404 ou JSON sem taxa/frete.</param>
+/// <param name="MercadoLivreErros">Falhas de rede/API ao consultar o Mercado Livre.</param>
 public record SincronizacaoPedidosResultado(
     int Inseridos,
     int JaExistiamNoBanco,
@@ -642,4 +756,7 @@ public record SincronizacaoPedidosResultado(
     int ItensPedidoInseridos = 0,
     int DetalhesPedidoSemRespostaOk = 0,
     int ConsolidadoVendasInseridas = 0,
-    int ConsolidadoVendasNaoProcessadas = 0);
+    int ConsolidadoVendasNaoProcessadas = 0,
+    int MercadoLivreConsolidadosAtualizados = 0,
+    int MercadoLivrePulados = 0,
+    int MercadoLivreErros = 0);
