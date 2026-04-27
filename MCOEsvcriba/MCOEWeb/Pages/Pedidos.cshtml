@@ -1,0 +1,401 @@
+@page "/pedidos"
+@model PedidosModel
+@{
+    ViewData["Title"] = "Pedidos";
+}
+
+<h1 class="mcoe-page-title mb-2">Pedidos</h1>
+<div class="row align-items-end g-2 mb-3">
+    <div class="col-12 col-md">
+        <span class="form-label small mb-1 d-block text-muted">Visualização</span>
+        <div class="d-flex flex-wrap gap-1 align-items-center">
+            <div class="btn-group btn-group-sm" role="group">
+                <a class="btn @(Model.ModoCards ? "btn-outline-primary" : "btn-primary")"
+                   asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-p="1" asp-route-v="g">Grid</a>
+                <a class="btn @(Model.ModoCards ? "btn-primary" : "btn-outline-primary")"
+                   asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-p="1" asp-route-v="c">Cards</a>
+            </div>
+            @if (Model.Buscar == "1")
+            {
+                <a class="btn btn-success btn-sm" asp-page="/Pedidos" asp-page-handler="Exportar"
+                   asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V"
+                   title="Exporta todos os registros do filtro atual">Excel</a>
+            }
+        </div>
+    </div>
+    @if (Model.Buscar == "1" && string.IsNullOrWhiteSpace(Model.Erro))
+    {
+        <div class="col-12 col-md-auto ms-md-auto text-md-end border border-secondary-subtle rounded px-3 py-3 bg-light">
+            <div class="row row-cols-1 row-cols-sm-2 row-cols-md-1 g-3 g-md-2">
+                <div class="col">
+                    <span class="small text-muted d-block mb-1">Total valor venda</span>
+                    <span class="fw-bold fs-4 lh-sm d-block">@PedidosViewFormat.Currency(Model.TotalValorVenda)</span>
+                </div>
+                <div class="col">
+                    <span class="small text-muted d-block mb-1">Total MC</span>
+                    <span class="fw-bold fs-4 lh-sm d-block @(Model.TotalMc < 0m ? "text-danger" : null)">@PedidosViewFormat.Currency(Model.TotalMc)</span>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@if (TempData["ErroExport"] is string ee)
+{
+    <div class="alert alert-warning py-2 small">Exportação Excel: @ee</div>
+}
+
+<form method="get" class="row g-2 g-md-3 align-items-end mb-3">
+    <input type="hidden" name="buscar" value="1" />
+    <div class="col-12 col-sm-6 col-md-3 col-lg-2">
+        <label class="form-label small mb-0">Data pedido (de)</label>
+        <input type="date" name="di" class="form-control form-control-sm" value="@(Model.Di?.ToString("yyyy-MM-dd"))" />
+    </div>
+    <div class="col-12 col-sm-6 col-md-3 col-lg-2">
+        <label class="form-label small mb-0">Data pedido (até)</label>
+        <input type="date" name="df" class="form-control form-control-sm" value="@(Model.Df?.ToString("yyyy-MM-dd"))" />
+    </div>
+    <div class="col-12 col-sm-4 col-md-2 col-lg-1">
+        <label class="form-label small mb-0">UF</label>
+        <input name="uf" class="form-control form-control-sm text-uppercase" maxlength="2" placeholder="SP" value="@Model.Uf" />
+    </div>
+    <div class="col-12 col-md-4 col-lg-3">
+        <label class="form-label small mb-0">Cliente</label>
+        <input name="cliente" class="form-control form-control-sm" placeholder="Parte do nome" value="@Model.Cliente" />
+    </div>
+    <input type="hidden" name="v" value="@Model.V" />
+    <div class="col-12 col-md-auto d-grid d-sm-flex flex-sm-wrap gap-1">
+        <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+        <a class="btn btn-outline-secondary btn-sm" asp-page="/Pedidos" title="Remove filtros e volta à tela inicial">Limpar filtros</a>
+    </div>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.Erro))
+{
+    <div class="alert alert-danger mt-3" role="alert">@Model.Erro</div>
+}
+else if (Model.Buscar != "1")
+{
+    <div class="alert alert-secondary mt-3" role="alert">
+        Defina os filtros (opcional) e clique em <strong>Filtrar</strong> para carregar os pedidos.
+    </div>
+}
+else if (Model.Linhas.Count == 0)
+{
+    <div class="alert alert-warning mt-3" role="alert">
+        Nenhum registro encontrado em <code>CONSOLIDADO_VENDAS</code>@(Model.TemAlgumFiltro() ? " com os filtros atuais" : "").
+    </div>
+}
+else
+{
+    @if (!Model.ModoCards)
+    {
+        <div id="pedidos-grid-nav" class="pedidos-tabela-wrap mt-3 pedidos-grid-nav-wrap mcoe-scroll-x" tabindex="0">
+            <p class="small text-muted mb-1 d-none d-md-block">Clique no <strong>Nº e-com.</strong> ou dê <strong>duplo clique</strong> na linha para ver o detalhe.</p>
+            <p class="small text-muted mb-1 d-md-none">Toque em <strong>Nº e-com.</strong> ou dê <strong>duplo toque</strong> na linha para ver o detalhe completo.</p>
+            <table id="pedidos-grid-resizable" class="table table-striped table-sm small mb-0 pedidos-tabela">
+                <colgroup>
+                    <col class="col-ecom" />
+                    <col class="col-data-pedido" />
+                    <col class="col-cliente" />
+                    <col class="col-uf" />
+                    <col class="col-val" /><col class="col-val" /><col class="col-val" />
+                    <col class="col-val" /><col class="col-val" /><col class="col-val" /><col class="col-val" />
+                    <col class="col-val" /><col class="col-val" />
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th scope="col">Nº e-com.</th>
+                        <th scope="col" class="text-nowrap d-none d-md-table-cell">Data pedido</th>
+                        <th scope="col">Cliente</th>
+                        <th scope="col" class="text-center d-none d-md-table-cell">UF</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">V. venda</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">Taxa MP</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">Frete</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">ICMS</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">PIS</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">COFINS</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">DIFAL</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">P. custo</th>
+                        <th scope="col" class="text-end text-nowrap d-none d-md-table-cell">MC</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var linha in Model.Linhas)
+                {
+                    <tr class="@PedidosViewFormat.RowClassMc(linha.Mc) js-pedido-linha-grid" data-id="@linha.Dados.IdConsolidacao">
+                        <td class="text-nowrap align-middle">
+                            <button type="button" class="btn btn-link p-0 text-nowrap text-start js-pedido-detalhe" data-id="@linha.Dados.IdConsolidacao">@PedidosViewFormat.Texto(linha.NumeroEcommerce)</button>
+                        </td>
+                        <td class="text-nowrap text-center d-none d-md-table-cell">@PedidosViewFormat.DataPedido(linha.DataPedido)</td>
+                        <td class="text-truncate cliente-cell align-middle" title="@linha.Dados.Cliente">@linha.Dados.Cliente</td>
+                        <td class="text-center text-nowrap d-none d-md-table-cell">@linha.Dados.UfVenda</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.ValorVenda)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.TaxaMarketplace)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.ValorFrete)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.Icms)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.Pis)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.Cofins)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.Dados.Difal)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Currency(linha.PrecoCustoTotal)</td>
+                        <td class="text-end text-nowrap d-none d-md-table-cell">@PedidosViewFormat.Mc(linha.Mc)</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="small text-muted mt-3 mb-0 d-none d-md-block">Duplo clique no card para ver o detalhe.</p>
+        <p class="small text-muted mt-3 mb-0 d-md-none">Duplo toque no card para ver o detalhe.</p>
+        <div class="row row-cols-1 row-cols-lg-3 g-3 mt-2 pedidos-cards-grid">
+            @foreach (var linha in Model.Linhas)
+            {
+                <div class="col">
+                    <div class="card h-100 shadow-sm @PedidosViewFormat.CardClassMc(linha.Mc) js-pedido-card text-decoration-none text-reset"
+                         data-id="@linha.Dados.IdConsolidacao"
+                         role="button"
+                         tabindex="0"
+                         title="Duplo clique para detalhe">
+                            <div class="card-body py-2 px-3 small d-flex flex-column">
+                                <div class="order-2 order-md-1 d-flex justify-content-between align-items-start gap-2 mb-2">
+                                    <span class="fw-semibold text-break">@linha.Dados.Cliente</span>
+                                    <span class="badge bg-secondary flex-shrink-0 d-none d-md-inline-block">@linha.Dados.UfVenda</span>
+                                </div>
+                                <div class="order-1 order-md-2 d-flex justify-content-between align-items-baseline gap-2 mb-2 pb-2 pedidos-card-linha border-bottom border-secondary-subtle">
+                                    <span class="text-muted">Nº e-com.</span>
+                                    <span class="fw-bold text-end text-break">@PedidosViewFormat.Texto(linha.NumeroEcommerce)</span>
+                                </div>
+                                <div class="order-3 order-md-3 d-flex justify-content-between align-items-baseline gap-2 mb-2 pb-2 pedidos-card-linha border-bottom border-secondary-subtle">
+                                    <span class="text-muted">Data pedido</span>
+                                    <span class="fw-bold text-end text-nowrap">@PedidosViewFormat.DataPedido(linha.DataPedido)</span>
+                                </div>
+                                <div class="order-4 d-flex d-md-none justify-content-between align-items-baseline gap-2 mb-2 pb-2 pedidos-card-linha border-bottom border-secondary-subtle">
+                                    <span class="text-muted">MC</span>
+                                    <span class="fw-bold text-nowrap text-end @(linha.Mc is < 0m ? "text-danger" : null)">@PedidosViewFormat.Mc(linha.Mc)</span>
+                                </div>
+                                <div class="order-md-4 vstack gap-0 pedidos-card-valores d-none d-md-flex">
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">V. venda</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.ValorVenda)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">Taxa MP</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.TaxaMarketplace)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">Frete</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.ValorFrete)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">ICMS</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.Icms)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">PIS</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.Pis)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">COFINS</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.Cofins)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">DIFAL</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.Dados.Difal)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">P. custo</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Currency(linha.PrecoCustoTotal)</span></div>
+                                    <div class="d-flex justify-content-between py-1 pedidos-card-linha"><span class="text-muted">MC</span><span class="fw-bold text-nowrap text-end">@PedidosViewFormat.Mc(linha.Mc)</span></div>
+                                </div>
+                            </div>
+                        </div>
+                </div>
+            }
+        </div>
+    }
+
+    <script type="application/json" id="pedidos-modal-json">@Html.Raw(Model.LinhasModalJson)</script>
+
+    <div class="modal fade" id="pedidoDetalheModal" tabindex="-1" aria-labelledby="pedidoDetalheTitulo" aria-hidden="true">
+        <div class="modal-dialog modal-fullscreen-sm-down modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="pedidoDetalheTitulo">Detalhe do registro</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body pedidos-detalhe-form">
+                    <div class="row g-2 g-lg-3 align-items-lg-stretch">
+                        <div class="col-lg-4 col-12">
+                            <p class="mb-2"><span class="text-muted small d-block">Id consolidação</span><span class="fs-6 fw-semibold text-break" id="m-id"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Id nota</span><span class="fs-6 fw-semibold text-break" id="m-idnota"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Nº e-commerce</span><span class="fs-6 fw-semibold text-break" id="m-ecom"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Data pedido</span><span class="fs-6 fw-semibold" id="m-data-pedido"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Cliente</span><span class="fs-6 fw-semibold text-break" id="m-cliente"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">UF</span><span class="fs-6 fw-semibold" id="m-uf"></span></p>
+                        </div>
+                        <div class="col-lg-4 col-12">
+                            <p class="mb-2"><span class="text-muted small d-block">Valor venda</span><span class="fs-6 fw-semibold text-break" id="m-vv"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Taxa marketplace</span><span class="fs-6 fw-semibold text-break" id="m-taxa"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Frete</span><span class="fs-6 fw-semibold text-break" id="m-frete"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">ICMS</span><span class="fs-6 fw-semibold text-break" id="m-icms"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">PIS</span><span class="fs-6 fw-semibold text-break" id="m-pis"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">COFINS</span><span class="fs-6 fw-semibold text-break" id="m-cofins"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">DIFAL</span><span class="fs-6 fw-semibold text-break" id="m-difal"></span></p>
+                            <p class="mb-2"><span class="text-muted small d-block">Preço de custo (itens)</span><span class="fs-6 fw-semibold text-break" id="m-custo"></span></p>
+                        </div>
+                        <div class="col-lg-4 col-12 d-flex">
+                            <div class="pedidos-detalhe-mc-bloco flex-grow-1 w-100 text-center p-3 border rounded bg-light">
+                                <div class="text-muted">Margem de contribuição</div>
+                                <div class="pedidos-detalhe-mc-valor fs-4 fw-bold text-break" id="m-mc"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mt-2 small">
+        <p class="text-center text-muted mb-2 mb-md-3">
+            @if (Model.TotalRegistros == 0)
+            {
+                <text>Nenhum registro.</text>
+            }
+            else
+            {
+                <text>Mostrando @Model.PrimeiroItemPagina–@Model.UltimoItemPagina de @Model.TotalRegistros registro(s).</text>
+            }
+        </p>
+        <nav class="d-flex flex-column align-items-center gap-2" aria-label="Paginação">
+            <ul class="pagination pagination-sm mb-0 flex-wrap justify-content-center">
+                <li class="page-item @(Model.PaginaEfetiva <= 1 || Model.TotalRegistros == 0 ? "disabled" : null)">
+                    <a class="page-link py-1" title="Primeira página"
+                       asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V" asp-route-p="1">«</a>
+                </li>
+                <li class="page-item @(Model.PaginaEfetiva <= 1 || Model.TotalRegistros == 0 ? "disabled" : null)">
+                    <a class="page-link py-1" title="Página anterior"
+                       asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V" asp-route-p="@(Model.PaginaEfetiva - 1)">‹</a>
+                </li>
+                @foreach (var pg in Model.PaginasParaExibir())
+                {
+                    @if (pg == Model.PaginaEfetiva)
+                    {
+                        <li class="page-item active" aria-current="page"><span class="page-link py-1 px-2">@pg</span></li>
+                    }
+                    else
+                    {
+                        <li class="page-item">
+                            <a class="page-link py-1 px-2"
+                               asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V" asp-route-p="@pg">@pg</a>
+                        </li>
+                    }
+                }
+                <li class="page-item @(Model.PaginaEfetiva >= Model.TotalPaginas || Model.TotalRegistros == 0 ? "disabled" : null)">
+                    <a class="page-link py-1"
+                       asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V" asp-route-p="@(Model.PaginaEfetiva + 1)">›</a>
+                </li>
+                <li class="page-item @(Model.PaginaEfetiva >= Model.TotalPaginas || Model.TotalRegistros == 0 ? "disabled" : null)">
+                    <a class="page-link py-1"
+                       asp-page="/Pedidos" asp-route-buscar="1" asp-route-di="@Model.Di" asp-route-df="@Model.Df" asp-route-uf="@Model.Uf" asp-route-cliente="@Model.Cliente" asp-route-v="@Model.V" asp-route-p="@Model.TotalPaginas">»</a>
+                </li>
+            </ul>
+            <div class="d-flex flex-wrap align-items-center justify-content-center gap-2">
+                <span class="text-muted">Página @Model.PaginaEfetiva de @Model.TotalPaginas</span>
+            </div>
+        </nav>
+    </div>
+
+    <style>
+        .pedidos-grid-nav-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .pedidos-tabela tbody tr.js-pedido-linha-grid { cursor: pointer; }
+        .pedidos-tabela tbody tr.js-pedido-linha-grid td { cursor: pointer; }
+        .pedidos-cards-grid .js-pedido-card { cursor: pointer; }
+        .pedidos-detalhe-mc-bloco .text-danger { color: var(--bs-danger) !important; }
+        .pedidos-tabela { table-layout: fixed; width: 100%; font-size: 0.78rem; }
+        .pedidos-tabela thead th, .pedidos-tabela tbody td { padding: 0.2rem 0.3rem; vertical-align: middle; }
+        .pedidos-tabela .col-ecom { width: 20%; min-width: 6.5rem; }
+        .pedidos-tabela .col-data-pedido { width: 7%; min-width: 4.5rem; }
+        .pedidos-tabela .col-cliente { width: 26%; min-width: 6rem; }
+        .pedidos-tabela .col-uf { width: 3%; min-width: 2rem; }
+        .pedidos-tabela .col-val { width: 5.625%; min-width: 3.1rem; }
+        .pedidos-tabela .cliente-cell { max-width: 0; }
+        @@media (max-width: 767.98px) {
+            .pedidos-tabela colgroup { display: none; }
+            .pedidos-tabela { table-layout: auto; }
+            .pedidos-tabela .cliente-cell { max-width: none; white-space: normal; word-break: break-word; }
+        }
+        .pedidos-cards-grid .card.border-danger { background-color: rgba(var(--bs-danger-rgb), 0.08); }
+        .pedidos-card-linha { min-height: 1.35rem; }
+        .pedidos-card-valores .pedidos-card-linha + .pedidos-card-linha { border-top: 1px solid var(--bs-border-color-translucent); }
+    </style>
+}
+
+@section Scripts {
+    @if (Model.Buscar == "1" && Model.Linhas.Count > 0)
+    {
+        <script>
+            document.addEventListener('DOMContentLoaded', function () {
+                @if (!Model.ModoCards)
+                {
+                    <text>
+                    try {
+                        pedidosGridResize.init('pedidos-grid-resizable');
+                        if (typeof pedidosGridNav !== 'undefined' && pedidosGridNav.setupKeyboard)
+                            pedidosGridNav.setupKeyboard('pedidos-grid-nav');
+                    } catch (e) { }
+                    </text>
+                }
+
+                var jsonEl = document.getElementById('pedidos-modal-json');
+                var modalEl = document.getElementById('pedidoDetalheModal');
+                if (!jsonEl || !modalEl || typeof bootstrap === 'undefined') return;
+
+                var rows = JSON.parse(jsonEl.textContent);
+                var byId = new Map(rows.map(function (r) { return [r.id, r]; }));
+                var brl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+                function fmt(v) { return v == null ? '—' : brl.format(v); }
+                function txt(s) { return !s ? '—' : String(s); }
+                var dtf = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                function fmtData(iso) {
+                    if (iso == null) return '—';
+                    var d = new Date(iso);
+                    return isNaN(d.getTime()) ? '—' : dtf.format(d);
+                }
+
+                var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+
+                function preencher(r) {
+                    document.getElementById('m-id').textContent = r.id;
+                    document.getElementById('m-idnota').textContent = r.idNota;
+                    document.getElementById('m-ecom').textContent = txt(r.numeroEcommerce);
+                    document.getElementById('m-data-pedido').textContent = fmtData(r.dataPedido);
+                    document.getElementById('m-cliente').textContent = txt(r.cliente);
+                    document.getElementById('m-uf').textContent = txt(r.ufVenda);
+                    document.getElementById('m-vv').textContent = fmt(r.valorVenda);
+                    document.getElementById('m-taxa').textContent = fmt(r.taxaMarketplace);
+                    document.getElementById('m-frete').textContent = fmt(r.valorFrete);
+                    document.getElementById('m-icms').textContent = fmt(r.icms);
+                    document.getElementById('m-pis').textContent = fmt(r.pis);
+                    document.getElementById('m-cofins').textContent = fmt(r.cofins);
+                    document.getElementById('m-difal').textContent = fmt(r.difal);
+                    document.getElementById('m-custo').textContent = fmt(r.precoCustoTotal);
+                    var mcEl = document.getElementById('m-mc');
+                    mcEl.textContent = r.mc == null ? '—' : brl.format(r.mc);
+                    mcEl.classList.toggle('text-danger', r.mc != null && r.mc < 0);
+                }
+
+                function abrir(id) {
+                    var r = byId.get(id);
+                    if (!r) return;
+                    preencher(r);
+                    modal.show();
+                }
+
+                document.querySelectorAll('.js-pedido-detalhe').forEach(function (btn) {
+                    btn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        abrir(+btn.dataset.id);
+                    });
+                });
+                document.querySelectorAll('.js-pedido-linha-grid').forEach(function (tr) {
+                    tr.addEventListener('dblclick', function () { abrir(+tr.dataset.id); });
+                });
+                document.querySelectorAll('.js-pedido-card').forEach(function (card) {
+                    card.addEventListener('dblclick', function (e) {
+                        e.preventDefault();
+                        abrir(+card.dataset.id);
+                    });
+                    card.addEventListener('keydown', function (e) {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            abrir(+card.dataset.id);
+                        }
+                    });
+                });
+            });
+        </script>
+    }
+}

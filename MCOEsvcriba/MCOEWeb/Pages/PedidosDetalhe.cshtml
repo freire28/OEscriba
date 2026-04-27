@@ -1,0 +1,47 @@
+@page "/pedidos/detalhe"
+@model PedidosDetalheModel
+@{
+    ViewData["Title"] = "Detalhe do pedido";
+    var d = Model.Linha;
+}
+
+@if (!string.IsNullOrWhiteSpace(Model.Erro))
+{
+    <div class="alert alert-warning">@Model.Erro</div>
+    <p><a asp-page="/Pedidos">Voltar</a></p>
+}
+else if (d is not null)
+{
+    <h1 class="mcoe-page-title">Detalhe do registro</h1>
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="row g-2 g-lg-3">
+                <div class="col-lg-4">
+                    <p><strong>Id consolidação</strong><br />@d.Dados.IdConsolidacao</p>
+                    <p><strong>Id nota</strong><br />@d.Dados.IdNota</p>
+                    <p><strong>Nº e-commerce</strong><br />@PedidosViewFormat.Texto(d.NumeroEcommerce)</p>
+                    <p><strong>Data pedido</strong><br />@PedidosViewFormat.DataPedido(d.DataPedido)</p>
+                    <p><strong>Cliente</strong><br />@d.Dados.Cliente</p>
+                    <p><strong>UF</strong><br />@d.Dados.UfVenda</p>
+                </div>
+                <div class="col-lg-4">
+                    <p><strong>Valor venda</strong><br />@PedidosViewFormat.Currency(d.Dados.ValorVenda)</p>
+                    <p><strong>Taxa marketplace</strong><br />@PedidosViewFormat.Currency(d.Dados.TaxaMarketplace)</p>
+                    <p><strong>Frete</strong><br />@PedidosViewFormat.Currency(d.Dados.ValorFrete)</p>
+                    <p><strong>ICMS</strong><br />@PedidosViewFormat.Currency(d.Dados.Icms)</p>
+                    <p><strong>PIS</strong><br />@PedidosViewFormat.Currency(d.Dados.Pis)</p>
+                    <p><strong>COFINS</strong><br />@PedidosViewFormat.Currency(d.Dados.Cofins)</p>
+                    <p><strong>DIFAL</strong><br />@PedidosViewFormat.Currency(d.Dados.Difal)</p>
+                    <p><strong>Preço de custo (itens)</strong><br />@PedidosViewFormat.Currency(d.PrecoCustoTotal)</p>
+                </div>
+                <div class="col-lg-4">
+                    <div class="p-3 border rounded bg-light text-center">
+                        <div class="text-muted">Margem de contribuição</div>
+                        <div class="fs-4 fw-bold text-break @(d.Mc is < 0 ? "text-danger" : "")">@PedidosViewFormat.Mc(d.Mc)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <p class="mt-3"><a asp-page="/Pedidos" asp-route-buscar="1" class="btn btn-outline-secondary mcoe-btn-phone-block">Voltar à lista</a></p>
+}

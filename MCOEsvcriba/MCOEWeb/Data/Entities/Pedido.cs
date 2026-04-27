@@ -10,6 +10,7 @@ public class Pedido
 
     public string IdTiny { get; set; } = string.Empty;
 
+    /// <summary>Identificador de e-commerce na Tiny (ex.: id do pedido no Mercado Livre em <c>numero_ecommerce</c>).</summary>
     public string NumeroEcommerce { get; set; } = string.Empty;
 
     public DateTime DataPedido { get; set; }

@@ -1,0 +1,20 @@
+@page "/teste-tiny"
+@model TesteTinyModel
+@{
+    ViewData["Title"] = "Teste API Tiny";
+}
+
+<h3>Teste API Tiny - notas.fiscais.pesquisa</h3>
+
+<form method="post" class="mb-3">
+    <div class="mb-3">
+        <label asp-for="Token" class="form-label">Token da API Tiny</label>
+        <input asp-for="Token" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-primary">Chamar API</button>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.Resultado))
+{
+    <pre class="mt-3">@Model.Resultado</pre>
+}

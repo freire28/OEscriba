@@ -1,0 +1,28 @@
+@page "/callback-mercadolivre"
+@model MercadoLivreCallbackModel
+@{
+    ViewData["Title"] = "Callback Mercado Livre";
+}
+
+<h3>Autorização Mercado Livre</h3>
+
+@if (Model.Carregando)
+{
+    <p>Processando autorização...</p>
+}
+else if (!string.IsNullOrWhiteSpace(Model.Erro))
+{
+    <div class="alert alert-danger">@Model.Erro</div>
+    <p><a asp-page="/MercadoLivreDemo">Voltar ao exemplo</a></p>
+}
+else if (!string.IsNullOrWhiteSpace(Model.UserJson))
+{
+    <div class="alert alert-success">Token obtido com sucesso.</div>
+    @if (!string.IsNullOrWhiteSpace(Model.ResumoToken))
+    {
+        <p class="small text-muted">@Model.ResumoToken</p>
+    }
+    <h4 class="mt-3">Resposta de <code>GET /users/me</code></h4>
+    <pre class="bg-light p-3 rounded border" style="max-height: 400px; overflow: auto;">@Model.UserJson</pre>
+    <p class="mt-3"><a asp-page="/MercadoLivreDemo" class="btn btn-outline-primary">Voltar ao exemplo</a></p>
+}

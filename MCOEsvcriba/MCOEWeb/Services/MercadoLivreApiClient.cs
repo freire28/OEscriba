@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -104,19 +105,6 @@ public class MercadoLivreApiClient
     }
 
     /// <summary>
-    /// Lista pedidos em que o usuário é <b>comprador</b> (<c>GET /orders/search?buyer=...</c>).
-    /// </summary>
-    public Task<string> BuscarPedidosPorCompradorAsync(
-        long buyerId,
-        int offset = 0,
-        int limit = 50,
-        CancellationToken cancellationToken = default)
-    {
-        limit = Math.Clamp(limit, 1, 50);
-        return GetAsync($"orders/search?buyer={buyerId}&offset={offset}&limit={limit}", cancellationToken);
-    }
-
-    /// <summary>
     /// Indica se há access token válido ou <c>refresh_token</c> para renovar antes das chamadas à API.
     /// </summary>
     public bool TemTokenParaChamadasApi() =>
@@ -157,99 +145,296 @@ public class MercadoLivreApiClient
     }
 
     /// <summary>
-    /// Lê <c>sale_fee</c> (ou soma em <c>order_items[].sale_fee</c>) e valor de frete como
-    /// <c>list_cost - shipping_cost</c> (tabela tarifária menos custo de envio informado pela API).
+    /// <c>GET /packs/{packId}</c> sem lançar em 404; usado após <c>/orders</c> com o mesmo <c>numero_ecommerce</c> quando o valor é id de pack.
     /// </summary>
-    public async Task<(decimal? SaleFee, decimal? ShippingCost)> ObterSaleFeeEFreteDoPedidoAsync(
-        string idPedidoMercadoLivre,
-        CancellationToken cancellationToken = default)
+    public async Task<string?> TryObterPackPorIdAsync(string packId, CancellationToken cancellationToken = default)
     {
-        var json = await TryObterPedidoPorIdAsync(idPedidoMercadoLivre, cancellationToken);
-        if (string.IsNullOrWhiteSpace(json))
-            return (null, null);
+        var id = (packId ?? "").Trim();
+        if (id.Length == 0 || !id.All(char.IsAsciiDigit))
+            return null;
 
-        using var doc = JsonDocument.Parse(json);
-        var root = doc.RootElement;
+        await EnsureValidAccessTokenAsync(cancellationToken);
+        var bearer = _tokenStore.AccessToken ?? throw new InvalidOperationException("Access token ausente após validação.");
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"packs/{id}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
 
-        decimal? saleFee = JsonGetDecimal(root, "sale_fee");
-        if (saleFee is null && root.TryGetProperty("order_items", out var orderItems) && orderItems.ValueKind == JsonValueKind.Array)
-        {
-            decimal sum = 0;
-            var any = false;
-            foreach (var item in orderItems.EnumerateArray())
-            {
-                if (JsonGetDecimal(item, "sale_fee") is { } part)
-                {
-                    sum += part;
-                    any = true;
-                }
-            }
-            if (any)
-                saleFee = sum;
-        }
-
-        decimal? listCost = null;
-        decimal? shippingCostField = null;
-
-        ColetarListCostEShippingCostDoShipping(root, ref listCost, ref shippingCostField);
-
-        if (root.TryGetProperty("shipping", out var shipping)
-            && TryGetInt64(shipping, "id") is long shipId and > 0
-            && (listCost is null || shippingCostField is null))
-        {
-            try
-            {
-                var shipmentJson = await GetAsync($"shipments/{shipId}", cancellationToken);
-                using var shipDoc = JsonDocument.Parse(shipmentJson);
-                ColetarListCostEShippingCostDoShipment(shipDoc.RootElement, ref listCost, ref shippingCostField);
-            }
-            catch
-            {
-                // shipment opcional; falha não invalida sale_fee
-            }
-        }
-
-        decimal? valorFrete = null;
-        if (listCost.HasValue)
-            valorFrete = listCost.Value - (shippingCostField ?? 0);
-        else if (shippingCostField.HasValue)
-            valorFrete = null;
-
-        return (saleFee, valorFrete);
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
     /// <summary>
-    /// Preenche <paramref name="listCost"/> (ex.: <c>shipping_option.list_cost</c>) e
-    /// <paramref name="shippingCostField"/> (campos <c>shipping_cost</c> no pedido/envio).
+    /// Extrai o primeiro <c>orders[].id</c> do JSON de <c>GET /packs/{id}</c>.
     /// </summary>
-    private static void ColetarListCostEShippingCostDoShipping(
-        JsonElement orderRoot,
-        ref decimal? listCost,
-        ref decimal? shippingCostField)
+    private static string? ExtrairPrimeiroOrderIdDoPackJson(string? packJson)
     {
-        shippingCostField ??= JsonGetDecimal(orderRoot, "shipping_cost");
-
-        if (!orderRoot.TryGetProperty("shipping", out var shipping))
-            return;
-
-        shippingCostField ??= JsonGetDecimal(shipping, "shipping_cost");
-
-        if (shipping.TryGetProperty("shipping_option", out var opt))
-            listCost ??= JsonGetDecimal(opt, "list_cost");
+        if (string.IsNullOrWhiteSpace(packJson))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(packJson);
+            if (!doc.RootElement.TryGetProperty("orders", out var orders) || orders.ValueKind != JsonValueKind.Array)
+                return null;
+            foreach (var o in orders.EnumerateArray())
+            {
+                if (!o.TryGetProperty("id", out var idEl))
+                    continue;
+                if (idEl.ValueKind == JsonValueKind.Number && idEl.TryGetInt64(out var n))
+                    return n.ToString(CultureInfo.InvariantCulture);
+                var s = idEl.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(s) && s.All(char.IsAsciiDigit))
+                    return s;
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        return null;
     }
 
-    private static void ColetarListCostEShippingCostDoShipment(
-        JsonElement shipmentRoot,
+    /// <summary>
+    /// Obtém valores para <c>TAXA_MARKETPLACE = order_cost - list_cost - sale_fee</c> (shipment + pedido ML).
+    /// Fluxo: (1) <c>GET /orders/{numero_ecommerce}</c>; (2) se não achar, <c>GET /packs/{numero_ecommerce}</c>;
+    /// (3) lê <c>orders[].id</c>; (4) <c>GET /orders/{id}</c>; (5) <c>GET /shipments/{id}</c> e opcionalmente <c>/costs</c>.
+    /// </summary>
+    public async Task<(decimal? SaleFee, decimal? OrderCost, decimal? ListCost, decimal? ShippingCost)> ObterCustosDoPedidoAsync(
+        string numeroEcommerceMercadoLivre,
+        CancellationToken cancellationToken = default)
+    {
+        var id = (numeroEcommerceMercadoLivre ?? "").Trim();
+        if (id.Length == 0 || !id.All(char.IsAsciiDigit))
+            return (null, null, null, null);
+
+        var json = await TryObterPedidoPorIdAsync(id, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            var packJson = await TryObterPackPorIdAsync(id, cancellationToken);
+            var orderFromPack = ExtrairPrimeiroOrderIdDoPackJson(packJson);
+            if (!string.IsNullOrEmpty(orderFromPack))
+                json = await TryObterPedidoPorIdAsync(orderFromPack, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(json))
+            return (null, null, null, null);
+
+        return await CalcularCustosDeJsonPedidoAsync(json, cancellationToken);
+    }
+
+    private async Task<(decimal? SaleFee, decimal? OrderCost, decimal? ListCost, decimal? ShippingCost)> CalcularCustosDeJsonPedidoAsync(
+        string json,
+        CancellationToken cancellationToken)
+    {
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        var saleFee = ExtrairSaleFeeDoPedido(root);
+
+        decimal? orderCost = null;
+        decimal? listCost = null;
+        decimal? shippingCostField = null;
+
+        var shipId = root.TryGetProperty("shipping", out var shipping)
+            ? TryGetInt64(shipping, "id")
+            : null;
+
+        if (shipId is { } sid && sid > 0)
+        {
+            var shipmentJson = await TryGetShipmentJsonAsync(sid, formatoNovo: true, cancellationToken)
+                ?? await TryGetShipmentJsonAsync(sid, formatoNovo: false, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(shipmentJson))
+            {
+                ExtrairCustosDoShipmentJson(shipmentJson, ref orderCost, ref listCost, ref shippingCostField);
+            }
+
+            if (!listCost.HasValue)
+                listCost ??= await ObterListCostDeShipmentCostsAsync(sid, cancellationToken);
+        }
+
+        return (saleFee, orderCost, listCost, shippingCostField);
+    }
+
+    private static decimal? ExtrairSaleFeeDoPedido(JsonElement root)
+    {
+        if (root.TryGetProperty("sale_fee", out var saleFeeEl))
+        {
+            if (saleFeeEl.ValueKind == JsonValueKind.Number || saleFeeEl.ValueKind == JsonValueKind.String)
+            {
+                var direct = JsonElementToDecimal(saleFeeEl);
+                if (direct is not null)
+                    return direct;
+            }
+
+            if (saleFeeEl.ValueKind == JsonValueKind.Object)
+            {
+                var fromObj = JsonTryDecimalNames(saleFeeEl, "amount", "value", "total", "fee", "raw_amount");
+                if (fromObj is not null)
+                    return fromObj;
+            }
+        }
+
+        if (!root.TryGetProperty("order_items", out var orderItems) || orderItems.ValueKind != JsonValueKind.Array)
+            return ExtrairMarketplaceFeeDosPagamentos(root);
+
+        decimal sum = 0;
+        var any = false;
+        foreach (var item in orderItems.EnumerateArray())
+        {
+            decimal? part = null;
+            if (item.TryGetProperty("sale_fee", out var itemFee))
+            {
+                if (itemFee.ValueKind is JsonValueKind.Number or JsonValueKind.String)
+                    part = JsonElementToDecimal(itemFee);
+                else if (itemFee.ValueKind == JsonValueKind.Object)
+                    part = JsonTryDecimalNames(itemFee, "amount", "value", "total", "fee", "raw_amount");
+            }
+
+            part ??= JsonTryDecimalNames(item, "marketplace_fee", "marketplaceFee");
+
+            if (part is not null)
+            {
+                sum += part.Value;
+                any = true;
+            }
+        }
+
+        if (any)
+            return sum;
+
+        return ExtrairMarketplaceFeeDosPagamentos(root);
+    }
+
+    private static decimal? ExtrairMarketplaceFeeDosPagamentos(JsonElement root)
+    {
+        var raiz = JsonTryDecimalNames(root, "marketplace_fee", "marketplaceFee");
+        if (raiz is not null)
+            return raiz;
+
+        if (!root.TryGetProperty("payments", out var payments) || payments.ValueKind != JsonValueKind.Array)
+            return null;
+
+        decimal sum = 0;
+        var any = false;
+        foreach (var p in payments.EnumerateArray())
+        {
+            if (JsonTryDecimalNames(p, "marketplace_fee", "marketplaceFee") is { } mf)
+            {
+                sum += mf;
+                any = true;
+            }
+        }
+
+        return any ? sum : null;
+    }
+
+    private async Task<string?> TryGetAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await GetAsync(path, cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// GET <c>/shipments/{id}</c>. Com <paramref name="formatoNovo"/> envia <c>x-format-new: true</c> (recomendado pelo ML).
+    /// </summary>
+    private async Task<string?> TryGetShipmentJsonAsync(long shipmentId, bool formatoNovo, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await EnsureValidAccessTokenAsync(cancellationToken);
+            var bearer = _tokenStore.AccessToken ?? throw new InvalidOperationException("Access token ausente após validação.");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"shipments/{shipmentId}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+         /*   if (formatoNovo)
+                request.Headers.TryAddWithoutValidation("x-format-new", "true");
+         */
+            var response = await _httpClient.SendAsync(request, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return null;
+            if (!response.IsSuccessStatusCode)
+                return null;
+            return await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// ML expõe custo de tabela do envio em <c>GET /shipments/{id}/costs</c> (<c>gross_amount</c>) quando o corpo principal não traz <c>list_cost</c>.
+    /// </summary>
+    private async Task<decimal?> ObterListCostDeShipmentCostsAsync(long shipmentId, CancellationToken cancellationToken)
+    {
+        var json = await TryGetAsync($"shipments/{shipmentId}/costs", cancellationToken);
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var r = doc.RootElement;
+            return JsonTryDecimalNames(r, "gross_amount", "list_cost", "listCost");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Extrai custos do JSON bruto de /shipments/{id}.
+    /// Mantém fallback textual para casos em que o payload venha em formato fora do esperado.
+    /// </summary>
+    private static void ExtrairCustosDoShipmentJson(
+        string shipmentJson,
+        ref decimal? orderCost,
         ref decimal? listCost,
         ref decimal? shippingCostField)
-    {
-        shippingCostField ??= JsonGetDecimal(shipmentRoot, "shipping_cost");
+    {      
+        orderCost ??= TryReadDecimalFromJsonText(shipmentJson, "order_cost");
+        listCost ??= TryReadDecimalFromJsonText(shipmentJson, "list_cost");
+        shippingCostField ??= TryReadDecimalFromJsonText(shipmentJson, "cost");
+    }
 
-        if (shipmentRoot.TryGetProperty("shipping_option", out var opt))
+    private static decimal? TryReadDecimalFromJsonText(string json, string fieldName)
+    {
+        var pattern = $"\\\"{Regex.Escape(fieldName)}\\\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)";
+        var match = Regex.Match(json, pattern, RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return null;
+
+        return decimal.TryParse(match.Groups[1].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
+            ? v
+            : null;
+    }
+
+    private static decimal? JsonTryDecimalNames(JsonElement el, params string[] propertyNames)
+    {
+        foreach (var name in propertyNames)
         {
-            listCost ??= JsonGetDecimal(opt, "list_cost");
-            shippingCostField ??= JsonGetDecimal(opt, "shipping_cost");
+            var v = JsonGetDecimal(el, name);
+            if (v.HasValue)
+                return v;
         }
+
+        foreach (var prop in el.EnumerateObject())
+        {
+            foreach (var name in propertyNames)
+            {
+                if (prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return JsonElementToDecimal(prop.Value);
+            }
+        }
+
+        return null;
     }
 
     private static decimal? JsonGetDecimal(JsonElement el, string propertyName)

@@ -1,0 +1,57 @@
+@page "/produtos"
+@model ProdutosModel
+@{
+    ViewData["Title"] = "Produtos";
+}
+
+<h3>Produtos - Preços e Tributos</h3>
+
+<form method="post" class="mb-3">
+    <div class="mb-3">
+        <label asp-for="Token" class="form-label">Token da API Tiny</label>
+        <input asp-for="Token" class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label asp-for="Pesquisa" class="form-label">Pesquisa (nome ou código)</label>
+        <input asp-for="Pesquisa" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-primary">Carregar produtos</button>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model.Erro))
+{
+    <div class="alert alert-danger mt-3">@Model.Erro</div>
+}
+
+@if (Model.Produtos.Count > 0)
+{
+    <table class="table table-striped table-sm mt-3">
+        <thead>
+            <tr>
+                <th>Produto</th>
+                <th class="text-end">Preço Custo</th>
+                <th class="text-end">Preço Venda</th>
+                <th class="text-end">Frete</th>
+                <th class="text-end">ICMS</th>
+                <th class="text-end">PIS</th>
+                <th class="text-end">COFINS</th>
+                <th class="text-end">DIFAL</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var p in Model.Produtos)
+        {
+            <tr>
+                <td>@p.Nome</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.PrecoCusto)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.PrecoVenda)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.ValorFrete)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.Icms)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.Pis)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.Cofins)</td>
+                <td class="text-end">@ProdutosModel.FormatCurrency(p.Difal)</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

@@ -1,0 +1,256 @@
+@page "/sincronizacao"
+@model SincronizacaoModel
+@{
+    ViewData["Title"] = "Sincronização";
+}
+
+<h1 class="mcoe-page-title">Sincronização de pedidos</h1>
+
+<p class="text-muted small sync-leiaute-doc d-none d-md-block">
+    Busca pedidos na API Tiny para o <strong>dia</strong> selecionado (mesma data em <code>dataInicial</code> e <code>dataFinal</code>)
+    e insere em <code>dbo.PEDIDOS</code> apenas quando o <code>id</code> do JSON <strong>ainda não existir</strong> em <code>ID_TINY</code>.
+    Campos: <code>ID_TINY</code> ← id, <code>numero_ecommerce</code>, <code>DATA_PEDIDO</code> ← data do pedido,
+    <code>DATA_SINCRONIZACAO</code> ← data/hora atual.
+    (2) Para cada pedido <strong>novo</strong>, <code>pedido.obter.php</code> grava <code>id_nota_fiscal</code> e <code>dbo.ItensPedido</code>.
+    (3–4) <code>SELECT</code> em <code>PEDIDOS</code> com <code>DATA_PEDIDO</code> no dia filtrado e <code>id_nota_fiscal</code> preenchido (inclui pedidos recém-inseridos nesta execução);
+    para cada um, <code>nota.fiscal.obter.xml.php</code> → <code>dbo.NOTAS_FISCAIS</code> (sem busca por e-commerce).
+</p>
+<p class="text-muted small d-md-none">Sincroniza pedidos do dia na Tiny (PEDIDOS, itens, NF-e, consolidado e Mercado Livre). Opcional: produtos.</p>
+
+<form method="post" asp-page="/Sincronizacao" class="mb-3" id="form-sincronizar">
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-md-4">
+            <label asp-for="DataSincronizacao" class="form-label">Data a sincronizar</label>
+            <input asp-for="DataSincronizacao" type="date" class="form-control" />
+        </div>
+        <div class="col-12 col-md-8">
+            <label asp-for="Token" class="form-label">Token da API Tiny</label>
+            <input asp-for="Token" class="form-control" autocomplete="off" placeholder="TinyApi:Token ou TINY_API_TOKEN" />
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <div class="form-check">
+            <input asp-for="SincronizarPedidos" class="form-check-input" id="chkPedidos" />
+            <label class="form-check-label" for="chkPedidos">Sincronizar pedidos</label>
+            <div class="text-muted small ms-4 mb-2">Última: <strong class="text-body" id="lbl-ultima-pedidos">@SincronizacaoModel.FormatarDataUltimaSinc(Model.UltimaDataSincPedidos)</strong></div>
+        </div>
+        <div class="form-check">
+            <input asp-for="SincronizarProdutos" class="form-check-input" id="chkProdutos" />
+            <label class="form-check-label" for="chkProdutos">Sincronizar produtos</label>
+            <div class="text-muted small ms-4">Última: <strong class="text-body" id="lbl-ultima-produtos">@SincronizacaoModel.FormatarDataUltimaSinc(Model.UltimaDataSincProdutos)</strong></div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary mcoe-btn-phone-block" id="btn-sincronizar">Sincronizar</button>
+</form>
+
+<div id="sync-progresso-bloco" class="mt-4 d-none" aria-live="polite">
+    <label class="form-label small text-muted mb-1">Progresso</label>
+    <div class="progress mb-2" style="height: 1.35rem;" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+        <div id="sync-progresso-barra" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%;">0%</div>
+    </div>
+    <p class="small text-muted mb-0" id="sync-progresso-texto">Iniciando…</p>
+</div>
+
+<div id="sync-erro-js" class="alert alert-danger mt-3 d-none" role="alert"></div>
+
+@if (!string.IsNullOrWhiteSpace(Model.Erro))
+{
+    <div class="alert alert-danger mt-3">@Model.Erro</div>
+}
+
+<div class="mt-4" id="sync-status-servidor">
+    <label class="form-label small text-muted mb-1">Status</label>
+    <p class="small text-muted mt-2 mb-0" id="sync-mensagem-status">@Model.MensagemStatus</p>
+</div>
+
+<div id="js-result-pedidos" class="alert alert-light border mt-3 small d-none"></div>
+<div id="js-result-produtos" class="alert alert-light border mt-3 small d-none"></div>
+
+@if (Model.UltimoResultadoPedidos is not null && string.IsNullOrWhiteSpace(Model.Erro))
+{
+    var r = Model.UltimoResultadoPedidos;
+    <div class="alert alert-light border mt-3 small" id="srv-result-pedidos">
+        Pedidos — Recebidos: @r.TotalRecebidos · Inseridos: @r.Inseridos · Já existiam (ID_TINY): @r.JaExistiamNoBanco · Sem id no JSON: @r.IgnoradosSemId
+        <br />
+        Itens — Linhas em ItensPedido: @r.ItensPedidoInseridos · Detalhe pedido sem OK: @r.DetalhesPedidoSemRespostaOk
+        <br />
+        NF-e — Gravadas: @r.NotasFiscaisInseridas · Falha ao obter XML: @r.NotasFiscaisSemNotaNaAPI · Ignoradas (dup./XML inválido): @r.NotasFiscaisIgnoradasDuplicadaOuErro
+        <br />
+        Consolidação — <code>CONSOLIDADO_VENDAS</code>: @r.ConsolidadoVendasInseridas inserida(s) · Não processadas (XML): @r.ConsolidadoVendasNaoProcessadas
+        <br />
+        Mercado Livre — taxa/frete em consolidado: @r.MercadoLivreConsolidadosAtualizados atualizado(s) · Pulados: @r.MercadoLivrePulados · Erros: @r.MercadoLivreErros
+    </div>
+}
+
+@if (Model.ResultadoProdutos is not null)
+{
+    var p = Model.ResultadoProdutos;
+    <div class="alert alert-light border mt-3 small" id="srv-result-produtos">
+        Produtos — Novos: @p.Inseridos · Atualizados: @p.Atualizados · Ignorados (sem id): @p.IgnoradosSemId
+    </div>
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            var form = document.getElementById('form-sincronizar');
+            if (!form) return;
+
+            var bloco = document.getElementById('sync-progresso-bloco');
+            var barra = document.getElementById('sync-progresso-barra');
+            var texto = document.getElementById('sync-progresso-texto');
+            var btn = document.getElementById('btn-sincronizar');
+            var erroJs = document.getElementById('sync-erro-js');
+            var statusEl = document.getElementById('sync-mensagem-status');
+            var ajudaSemJs = document.getElementById('sync-ajuda-sem-js');
+            var jsResPed = document.getElementById('js-result-pedidos');
+            var jsResProd = document.getElementById('js-result-produtos');
+            var lblUltPed = document.getElementById('lbl-ultima-pedidos');
+            var lblUltProd = document.getElementById('lbl-ultima-produtos');
+
+            if (ajudaSemJs) ajudaSemJs.classList.remove('d-none');
+
+            function fmtData(iso) {
+                if (!iso) return '—';
+                try {
+                    var d = new Date(iso);
+                    if (isNaN(d.getTime())) return '—';
+                    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                } catch (e) { return '—'; }
+            }
+
+            function esconderResultadosServidor() {
+                ['srv-result-pedidos', 'srv-result-produtos'].forEach(function (id) {
+                    var el = document.getElementById(id);
+                    if (el) el.classList.add('d-none');
+                });
+            }
+
+            function mostrarResultadoPedidos(r) {
+                if (!r || !jsResPed) return;
+                jsResPed.innerHTML =
+                    'Pedidos — Recebidos: ' + r.totalRecebidos + ' · Inseridos: ' + r.inseridos + ' · Já existiam (ID_TINY): ' + r.jaExistiamNoBanco + ' · Sem id no JSON: ' + r.ignoradosSemId +
+                    '<br />Itens — Linhas em ItensPedido: ' + r.itensPedidoInseridos + ' · Detalhe pedido sem OK: ' + r.detalhesPedidoSemRespostaOk +
+                    '<br />NF-e — Gravadas: ' + r.notasFiscaisInseridas + ' · Falha ao obter XML: ' + r.notasFiscaisSemNotaNaAPI + ' · Ignoradas (dup./XML inválido): ' + r.notasFiscaisIgnoradasDuplicadaOuErro +
+                    '<br />Consolidação — <code>CONSOLIDADO_VENDAS</code>: ' + r.consolidadoVendasInseridas + ' inserida(s) · Não processadas (XML): ' + r.consolidadoVendasNaoProcessadas +
+                    '<br />Mercado Livre — taxa/frete em consolidado: ' + r.mercadoLivreConsolidadosAtualizados + ' atualizado(s) · Pulados: ' + r.mercadoLivrePulados + ' · Erros: ' + r.mercadoLivreErros;
+                jsResPed.classList.remove('d-none');
+            }
+
+            function mostrarResultadoProdutos(p) {
+                if (!p || !jsResProd) return;
+                jsResProd.textContent = 'Produtos — Novos: ' + p.inseridos + ' · Atualizados: ' + p.atualizados + ' · Ignorados (sem id): ' + p.ignoradosSemId;
+                jsResProd.classList.remove('d-none');
+            }
+
+            function atualizarProgresso(pct, msg, reiniciar) {
+                if (reiniciar) {
+                    barra.style.width = '0%';
+                    barra.textContent = '0%';
+                    barra.setAttribute('aria-valuenow', '0');
+                    barra.classList.remove('progress-bar-animated');
+                    void barra.offsetWidth;
+                    barra.classList.add('progress-bar-animated');
+                }
+                var n = Math.max(0, Math.min(100, pct | 0));
+                barra.style.width = n + '%';
+                barra.textContent = n + '%';
+                barra.setAttribute('aria-valuenow', String(n));
+                texto.textContent = msg || '…';
+                if (statusEl) statusEl.textContent = msg || '…';
+            }
+
+            form.addEventListener('submit', function (e) {
+                if (!window.fetch) return;
+                e.preventDefault();
+
+                erroJs.classList.add('d-none');
+                erroJs.textContent = '';
+                jsResPed.classList.add('d-none');
+                jsResProd.classList.add('d-none');
+                esconderResultadosServidor();
+
+                bloco.classList.remove('d-none');
+                atualizarProgresso(0, 'Conectando…', true);
+                btn.disabled = true;
+
+                var fd = new FormData(form);
+                var url = form.getAttribute('action') || window.location.pathname;
+                if (url.indexOf('handler=') < 0)
+                    url += (url.indexOf('?') >= 0 ? '&' : '?') + 'handler=Sse';
+
+                fetch(url, {
+                    method: 'POST',
+                    body: fd,
+                    headers: { 'Accept': 'text/event-stream' },
+                    credentials: 'same-origin'
+                }).then(function (res) {
+                    var ct = (res.headers.get('content-type') || '').toLowerCase();
+                    if (!res.ok && ct.indexOf('application/json') >= 0)
+                        return res.json().then(function (j) { throw new Error(j.erro || ('Erro ' + res.status)); });
+                    if (!res.ok)
+                        throw new Error('Falha na sincronização (' + res.status + ').');
+                    if (ct.indexOf('text/event-stream') < 0)
+                        throw new Error('Resposta inesperada do servidor.');
+
+                    var reader = res.body.getReader();
+                    var dec = new TextDecoder();
+                    var buf = '';
+
+                    function processarBuffer() {
+                        var parts = buf.split('\n\n');
+                        buf = parts.pop() || '';
+                        for (var i = 0; i < parts.length; i++) {
+                            var block = parts[i].trim();
+                            if (!block || block.indexOf('data: ') !== 0) continue;
+                            var raw = block.slice(6);
+                            var data;
+                            try { data = JSON.parse(raw); } catch (x) { continue; }
+                            if (data.done) {
+                                if (data.erro) {
+                                    erroJs.textContent = data.erro;
+                                    erroJs.classList.remove('d-none');
+                                    atualizarProgresso(100, 'Erro.', false);
+                                } else {
+                                    atualizarProgresso(100, 'Concluído.', false);
+                                    if (data.pedidos) mostrarResultadoPedidos(data.pedidos);
+                                    if (data.produtos) mostrarResultadoProdutos(data.produtos);
+                                }
+                                if (lblUltPed && data.ultimaDataSincPedidos != null)
+                                    lblUltPed.textContent = fmtData(data.ultimaDataSincPedidos);
+                                if (lblUltProd && data.ultimaDataSincProdutos != null)
+                                    lblUltProd.textContent = fmtData(data.ultimaDataSincProdutos);
+                                return true;
+                            }
+                            if (typeof data.percentual === 'number')
+                                atualizarProgresso(data.percentual, data.mensagem || '', !!data.reiniciarBarra);
+                        }
+                        return false;
+                    }
+
+                    function read() {
+                        return reader.read().then(function (result) {
+                            if (result.done) {
+                                buf += dec.decode();
+                                processarBuffer();
+                                return;
+                            }
+                            buf += dec.decode(result.value, { stream: true });
+                            if (processarBuffer()) return;
+                            return read();
+                        });
+                    }
+                    return read();
+                }).catch(function (err) {
+                    erroJs.textContent = err.message || String(err);
+                    erroJs.classList.remove('d-none');
+                    atualizarProgresso(0, 'Erro.', false);
+                }).finally(function () {
+                    btn.disabled = false;
+                });
+            });
+        })();
+    </script>
+}

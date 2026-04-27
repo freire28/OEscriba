@@ -1,0 +1,140 @@
+@page "/mercadolivre-demo"
+@model MercadoLivreDemoModel
+@inject MercadoLivreApiClient MercadoLivre
+@{
+    ViewData["Title"] = "Mercado Livre - Exemplo";
+}
+
+<h3>Exemplo de uso do token (Mercado Livre)</h3>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">1. Autorizar aplicação</h5>
+        <p class="card-text small text-muted">
+            No painel do Mercado Livre, a <strong>Redirect URI</strong> deve ser exatamente a mesma configurada em
+            <code>appsettings.json</code> → <code>MercadoLivre:RedirectUri</code>.
+            Para este exemplo, use algo como <code>https://seu-dominio/callback-mercadolivre</code>
+            (a rota deste app é <code>/callback-mercadolivre</code>).
+        </p>
+        <p><strong>Redirect URI atual:</strong> <code>@(string.IsNullOrWhiteSpace(MercadoLivre.RedirectUri) ? "(não configurado)" : MercadoLivre.RedirectUri)</code></p>
+        @if (string.IsNullOrWhiteSpace(MercadoLivre.RedirectUri))
+        {
+            <div class="alert alert-warning">Configure ClientId, ClientSecret e RedirectUri em appsettings.</div>
+        }
+        else
+        {
+            <a class="btn btn-primary" href="@MercadoLivre.GetAuthorizationUrl()" target="_blank" rel="noopener">
+                Abrir página de login do Mercado Livre
+            </a>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">2. Atualizar access token (refresh_token)</h5>
+        <form method="post" asp-page-handler="RefreshToken">
+            <input type="hidden" asp-for="TokenManual" />
+            <div class="mb-2">
+                <label asp-for="RefreshTokenManual" class="form-label">Refresh token</label>
+                <textarea asp-for="RefreshTokenManual" class="form-control font-monospace small" rows="2" placeholder="TG-..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-outline-secondary">Renovar token</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(Model.ErroRefresh))
+        {
+            <div class="alert alert-danger mt-3">@Model.ErroRefresh</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.JsonRefresh))
+        {
+            <h6 class="mt-3">Resposta <code>/oauth/token</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 240px; overflow: auto;">@Model.JsonRefresh</pre>
+            <p class="small text-success mb-0">O novo <code>access_token</code> foi colocado no campo da seção 3; o <code>refresh_token</code> no campo acima foi atualizado com o retorno.</p>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">3. Testar com token já obtido</h5>
+        <form method="post" asp-page-handler="UsersMe">
+            <input type="hidden" asp-for="RefreshTokenManual" />
+            <div class="mb-2">
+                <label asp-for="TokenManual" class="form-label">Access token</label>
+                <textarea asp-for="TokenManual" class="form-control font-monospace small" rows="2" placeholder="APP_USR-..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-secondary">GET /users/me</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(Model.ErroManual))
+        {
+            <div class="alert alert-danger mt-3">@Model.ErroManual</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.JsonManual))
+        {
+            <h6 class="mt-3">Resposta</h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 320px; overflow: auto;">@Model.JsonManual</pre>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">4. Pedidos da conta (vendedor)</h5>
+        <form method="post" asp-page-handler="PedidosVendedor">
+            <input type="hidden" asp-for="TokenManual" />
+            <input type="hidden" asp-for="RefreshTokenManual" />
+            <div class="row g-2 mb-2">
+                <div class="col-md-4">
+                    <label asp-for="SellerIdStr" class="form-label">ID do vendedor (opcional)</label>
+                    <input asp-for="SellerIdStr" class="form-control" placeholder="Ex.: 207035636" />
+                </div>
+                <div class="col-md-2">
+                    <label asp-for="PedidosOffset" class="form-label">Offset</label>
+                    <input asp-for="PedidosOffset" type="number" class="form-control" min="0" />
+                </div>
+                <div class="col-md-2">
+                    <label asp-for="PedidosLimit" class="form-label">Limit (1–50)</label>
+                    <input asp-for="PedidosLimit" type="number" class="form-control" min="1" max="50" />
+                </div>
+            </div>
+            <button type="submit" class="btn btn-outline-primary">Buscar pedidos</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(Model.ErroPedidos))
+        {
+            <div class="alert alert-danger mt-3">@Model.ErroPedidos</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.JsonPedidos))
+        {
+            <h6 class="mt-3">Resposta <code>orders/search</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 400px; overflow: auto;">@Model.JsonPedidos</pre>
+        }
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title">5. Pedido por código (ID)</h5>
+        <form method="post" asp-page-handler="PedidoPorId">
+            <input type="hidden" asp-for="TokenManual" />
+            <input type="hidden" asp-for="RefreshTokenManual" />
+            <div class="row g-2 mb-2">
+                <div class="col-md-6">
+                    <label asp-for="PedidoIdStr" class="form-label">ID do pedido</label>
+                    <input asp-for="PedidoIdStr" class="form-control font-monospace" placeholder="2000015371733006" />
+                </div>
+            </div>
+            <button type="submit" class="btn btn-outline-primary">Buscar pedido</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(Model.ErroPedidoId))
+        {
+            <div class="alert alert-danger mt-3">@Model.ErroPedidoId</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(Model.JsonPedidoId))
+        {
+            <h6 class="mt-3">Resposta <code>orders/@Model.PedidoIdStr</code></h6>
+            <pre class="bg-light p-3 rounded border small" style="max-height: 400px; overflow: auto;">@Model.JsonPedidoId</pre>
+        }
+    </div>
+</div>
+
+<p><a asp-page="/MercadoLivreCallback">Abrir rota de callback (útil só após redirecionamento do ML com ?code=...)</a></p>

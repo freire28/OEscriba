@@ -3,7 +3,7 @@
 <Project>
   <PropertyGroup>
     <_PublishTargetUrl>C:\Projetos TDM\OEscriba\MCOEsvcriba\MCOEWeb\bin\Release\net8.0\publish\</_PublishTargetUrl>
-    <History>True|2026-03-20T13:34:22.0462708Z||;</History>
+    <History>True|2026-04-25T17:21:24.0447316Z||;True|2026-04-25T09:03:04.7146883-03:00||;True|2026-04-17T17:25:50.5238562-03:00||;True|2026-04-16T21:17:55.6983136-03:00||;True|2026-04-16T16:51:42.1998302-03:00||;True|2026-03-20T10:34:22.0462708-03:00||;</History>
     <LastFailureDetails />
   </PropertyGroup>
 </Project>

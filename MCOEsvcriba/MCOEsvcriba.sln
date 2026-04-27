@@ -1,9 +1,9 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36804.6
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MCOEWeb", "MCOEWeb.csproj", "{F7B8B876-0B01-AC68-A369-DDB0054C40ED}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MCOEWeb", "MCOEWeb\MCOEWeb.csproj", "{F7B8B876-0B01-AC68-A369-DDB0054C40ED}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

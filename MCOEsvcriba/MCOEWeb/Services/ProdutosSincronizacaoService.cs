@@ -64,7 +64,8 @@ public class ProdutosSincronizacaoService
             totalPaginas = Math.Max(1, ret.NumeroPaginas ?? 1);
 
             ReportarProgresso(progresso, progressBase, progressSpan, pagina, totalPaginas,
-                $"Produtos — página {pagina} de {totalPaginas}…");
+                $"Produtos — página {pagina} de {totalPaginas}…",
+                reiniciarBarra: pagina == 1);
 
             var wrappers = ret.Produtos ?? new List<TinyProdutoPesquisaWrapper>();
             if (wrappers.Count > 0)
@@ -134,7 +135,8 @@ public class ProdutosSincronizacaoService
         }
 
         ReportarProgresso(progresso, progressBase, progressSpan, totalPaginas, totalPaginas,
-            $"Produtos — concluído ({inseridos} novo(s), {atualizados} atualizado(s)).");
+            $"Produtos — concluído ({inseridos} novo(s), {atualizados} atualizado(s)).",
+            reiniciarBarra: false);
 
         return new ProdutosSincronizacaoResultado(inseridos, atualizados, ignorados);
     }
@@ -145,7 +147,8 @@ public class ProdutosSincronizacaoService
         int progressSpan,
         int paginaAtual,
         int totalPaginas,
-        string mensagem)
+        string mensagem,
+        bool reiniciarBarra = false)
     {
         if (progresso is null)
             return;
@@ -154,7 +157,7 @@ public class ProdutosSincronizacaoService
             : (int)(paginaAtual * 100.0 / totalPaginas);
         var pct = progressBase + (int)(pctInterno * progressSpan / 100.0);
         pct = Math.Clamp(pct, 0, 100);
-        progresso.Report(new SincronizacaoProgresso(pct, mensagem));
+        progresso.Report(new SincronizacaoProgresso(pct, mensagem, reiniciarBarra));
     }
 
     private static string NormalizarIdTiny(string? id)
